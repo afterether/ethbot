@@ -1,5 +1,5 @@
 CREATE OR REPLACE FUNCTION get_VTs(p_account_id integer,p_block_num integer)
-RETURNS TABLE(valtr_id bigint,block_num int,from_id int,from_balance text,to_id int,to_balance text,value text) AS $$
+RETURNS TABLE(valtr_id bigint,block_num int,from_id int,from_balance text,to_id int,to_balance text,value text,tx_id bigint,kind char) AS $$
 BEGIN
 
 	IF p_block_num = -1 THEN
@@ -14,7 +14,9 @@ BEGIN
 		v.from_balance::text,
 		v.to_id,
 		v.to_balance::text,
-		v.value::text
+		v.value::text,
+		v.tx_id,
+		v.kind
 	FROM value_transfer v
 	WHERE
 		v.block_num<=p_block_num AND

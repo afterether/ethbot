@@ -21,6 +21,15 @@ func set_verif_error(valtr_id int64,err_text string) {
 	ethbot_instance.verification.Error_str=err_text
 	log.Error("Verification failed","valtr_id",ethbot_instance.verification.Failing_valtr_id,"error",ethbot_instance.verification.Error_str);
 }
+func verif_check_input_block_num(arg_block_num otto.Value) (Block_num_t,error) {
+	p_block_num,err:=arg_block_num.ToInteger()
+	if (err!=nil) {
+		err_text:="Invalid input value for `block_num` parameter: positive integer values are allowed"
+		log.Error(err_text)
+		return 0,errors.New(err_text)
+	}
+	return Block_num_t(p_block_num),nil
+}
 func check_input_block_range(arg_starting_block otto.Value,arg_ending_block otto.Value) (Block_num_t,Block_num_t,error) {
 
 	p_starting_block,err:=arg_starting_block.ToInteger()
@@ -47,54 +56,71 @@ func check_input_block_range(arg_starting_block otto.Value,arg_ending_block otto
 	}
 	return Block_num_t(p_starting_block),Block_num_t(p_ending_block),nil
 }
-func check_input_verify_SQL_data(arg_mode otto.Value,arg_starting_block otto.Value,arg_ending_block otto.Value) (int,Block_num_t,Block_num_t,error) {
-	var err error
-	var p_mode_64 int64
-	p_mode_64,err=arg_mode.ToInteger()
-	if (err!=nil) {
-		err_text:="Invalid input value for `mode` parameter: 0 or 1 are allowed"
-		log.Error(err_text)
-		return 0,0,0,errors.New(err_text)
-	}
-	p_mode:=int(p_mode_64)
-	p_starting_block,p_ending_block,err2:=check_input_block_range(arg_starting_block,arg_ending_block)
-	if (err2!=nil) {
-		return 0,0,0,err2
-	}
-	if (p_starting_block>p_ending_block) {
-		err_text:="`starting_block` must be less or equal than `ending_block`"
-		log.Error(err_text)
-		return 0,0,0,errors.New(err_text)
-	}
-	return p_mode,p_starting_block,p_ending_block,nil;
-}
-func js_local_verify_sql_data(arg_mode otto.Value,arg_starting_block otto.Value,arg_ending_block otto.Value) otto.Value {
-	mode,starting_block,ending_block,err:=check_input_verify_SQL_data(arg_mode,arg_starting_block,arg_ending_block)
+func js_local_verify_sql_data_1(arg_block_num otto.Value) otto.Value {
+
+	block_num,err:=verif_check_input_block_num(arg_block_num)
 	if (err!=nil) {
 		return otto.FalseValue()
 	}
-	result:=verify_SQL_data(mode,starting_block,ending_block)
+	result:=verify_SQL_data(0,block_num,block_num)
 	if (result) {
 		return otto.TrueValue()
 	} else {
 		return otto.FalseValue()
 	}
 }
-func js_remote_verify_sql_data(arg_mode otto.Value,arg_starting_block otto.Value,arg_ending_block otto.Value) otto.Value {
+func js_local_verify_sql_data_2(arg_block_num otto.Value) otto.Value {
+
+	block_num,err:=verif_check_input_block_num(arg_block_num)
+	if (err!=nil) {
+		return otto.FalseValue()
+	}
+	result:=verify_SQL_data(VERIFICATION_SQL,block_num,block_num)
+	if (result) {
+		return otto.TrueValue()
+	} else {
+		return otto.FalseValue()
+	}
+}
+func js_remote_verify_sql_data_1(arg_block_num otto.Value) otto.Value {
 
 	if (remote_EthBot==nil) {
-		log.Error("remote end for RPC not initalized")
+		log.Error("EthBot: remote end for RPC not initalized")
 		return otto.FalseValue()
 	}
 
-	mode,starting_block,ending_block,err:=check_input_verify_SQL_data(arg_mode,arg_starting_block,arg_ending_block)
+	block_num,err:=verif_check_input_block_num(arg_block_num)
 	if (err!=nil) {
 		return otto.FalseValue()
 	}
 	var result bool
-	err=remote_EthBot.Call(&result,"ethbot_verifysqldata",mode,starting_block,ending_block);
+	err=remote_EthBot.Call(&result,"ethbot_verifysqldata1",block_num);
 	if (err!=nil) {
-		log.Error("Error calling RPC method ethbot_verifysqldata","error",err)
+		log.Error("EthBot: error calling RPC method ethbot_verifysqldata1","error",err)
+		return otto.FalseValue()
+	} else {
+		if result {
+			return otto.TrueValue()
+		} else {
+			return otto.FalseValue()
+		}
+	}
+}
+func js_remote_verify_sql_data_2(arg_block_num otto.Value) otto.Value {
+
+	if (remote_EthBot==nil) {
+		log.Error("EthBot: remote end for RPC not initalized")
+		return otto.FalseValue()
+	}
+
+	block_num,err:=verif_check_input_block_num(arg_block_num)
+	if (err!=nil) {
+		return otto.FalseValue()
+	}
+	var result bool
+	err=remote_EthBot.Call(&result,"ethbot_verifysqldata2",block_num);
+	if (err!=nil) {
+		log.Error("EthBot: error calling RPC method ethbot_verifysqldata2","error",err)
 		return otto.FalseValue()
 	} else {
 		if result {
@@ -137,10 +163,10 @@ func verify_SQL_data(mode int, starting_block Block_num_t,ending_block Block_num
 	// pick the correct function, depending on the mode
 	switch(mode) {
 		case VERIFICATION_LEVELDB: {
-			verify_LevelDB_as_gold_standard();
+			verify_SQL_data_1();
 		}
 		case VERIFICATION_SQL: {
-			verify_SQLdb_as_gold_standard();
+			verify_SQL_data_2();
 		}
 		default: {	// this should never occur since we validate above
 			set_verif_error(0,fmt.Sprintf("Unknown validation mode %v",mode));
@@ -159,7 +185,7 @@ func stop_verification() {
 	ethbot_instance.verification.User_cancelled=true;
 }
 func stop_verification_completed() {
-	log.Info("Sent cancellation request. Will stop when the loop is completed.");
+	log.Info("EthBot: sent cancellation request. Will stop when the loop is completed.");
 }
 func js_local_stop_verification() otto.Value {
 	stop_verification()
@@ -169,13 +195,13 @@ func js_local_stop_verification() otto.Value {
 func js_remote_stop_verification() otto.Value {
 
 	if (remote_EthBot==nil) {
-		log.Error("remote end for RPC not initalized")
+		log.Error("EthBot: remote end for RPC not initalized")
 		return otto.FalseValue()
 	}
 	var result bool
 	err:=remote_EthBot.Call(&result,"ethbot_stopverification");
 	if (err!=nil) {
-		log.Error("Error calling RPC method ethbot_stopverification","error",err)
+		log.Error("EthBot: error calling RPC method ethbot_stopverification","error",err)
 		return otto.FalseValue()
 	} else {
 		return otto.TrueValue()
@@ -184,7 +210,7 @@ func js_remote_stop_verification() otto.Value {
 func verification_status(vs *Verification_t) *otto.Object {
 	jsre:=console_obj.JSRE()
 	vm:=jsre.VM()
-	obj_str:=fmt.Sprintf(`({"mode":%v,"starting_block":%v,"ending_block":%v,"direction":%v,"in_progress":%v,"current_block_num":%d,"failed":%v,"valtr_id":%d,"cancelled_by_user":%v,"total_threads":%d,"finished_threads":%d,"num_accounts":%v,"num_processed":%v})`,vs.Mode,vs.Starting_block,vs.Ending_block,vs.Direction,vs.In_progress,vs.Current_block_num,vs.Failed,vs.Failing_valtr_id,vs.User_cancelled,vs.Threads_counter,vs.Finished_threads_counter,vs.Num_accounts,vs.Num_processed);
+	obj_str:=fmt.Sprintf(`({"in_progress":%v,"block_num":%d,"failed":%v,"valtr_id":%d,"cancelled_by_user":%v,"total_threads":%d,"finished_threads":%d,"num_accounts":%v,"num_processed":%v})`,vs.In_progress,vs.Current_block_num,vs.Failed,vs.Failing_valtr_id,vs.User_cancelled,vs.Threads_counter,vs.Finished_threads_counter,vs.Num_accounts,vs.Num_processed);
 	object, err := vm.Object(obj_str)
 	if (err!=nil) {
 		utils.Fatalf("Failed to create object in Javascript VM for verification status object: %v",err)
@@ -198,13 +224,13 @@ func js_local_verification_status() *otto.Object {
 func js_remote_verification_status() *otto.Object {
 
 	if (remote_EthBot==nil) {
-		log.Error("remote end for RPC not initalized")
+		log.Error("EthBot: remote end for RPC not initalized")
 		return ethbot_instance.empty_object()
 	}
 	var result Verification_t
 	err:=remote_EthBot.Call(&result,"ethbot_verificationstatus");
 	if (err!=nil) {
-		log.Error("Error calling ethbot_verificationstatus","error",err)
+		log.Error("EthBot: error calling ethbot_verificationstatus","error",err)
 		return ethbot_instance.empty_object()
 	} else {
 		return verification_status(&result)
@@ -225,11 +251,10 @@ func wait_for_verification_threads(ch chan bool) {
 	}
 	ethbot_instance.verification.Threads_counter=0;
 }
-func verify_LevelDB_as_gold_standard() {
+func verify_SQL_data_1() {
 	var i int=0
 	var status_write_back chan bool // used to keep track of how many verification go_routines has been spawn
 	var bptr *types.Block;
-	var exists bool
 
 	status_write_back=make(chan bool)
 	blockchain:=ethbot_instance.ethereum.BlockChain()
@@ -237,10 +262,15 @@ func verify_LevelDB_as_gold_standard() {
 
 	for ethbot_instance.verification.Current_block_num=ethbot_instance.verification.Starting_block;ethbot_instance.verification.Current_block_num<=end;ethbot_instance.verification.Current_block_num++ {
 		bptr=blockchain.GetBlockByNumber(uint64(ethbot_instance.verification.Current_block_num))
+		if (bptr==nil) {
+			log.Error(fmt.Sprintf("EthBot: invalid block number specified by user: %v",ethbot_instance.verification.Current_block_num))
+			set_verif_error(0,fmt.Sprintf("EthBot: invalid block number specified by user: %v",ethbot_instance.verification.Current_block_num))
+			return;
+		}
 		statedb, err := blockchain.StateAt(bptr.Root())
         if err != nil {
-            log.Error(fmt.Sprintf("StateAt(%v) failed",bptr.Number().Uint64()))
-			set_verif_error(0,fmt.Sprintf("StateAt(%v) failed",bptr.Number().Uint64()));
+			log.Error(fmt.Sprintf("EthBot: stateAt(%v) failed",bptr.Number().Uint64()))
+			set_verif_error(0,fmt.Sprintf("EthBot: StateAt(%v) failed",bptr.Number().Uint64()));
 			return
         }
 		var accounts_counter int=0;
@@ -255,31 +285,25 @@ func verify_LevelDB_as_gold_standard() {
 		icount:=1;
 		for key,dump_balance:=range accounts {
 			addr:=key
-			address_str:=get_hex_addr(&addr);
+			address_str:=hex.EncodeToString(addr.Bytes())
 			icount++
 
-				account_id,exists=ethbot_instance.eb_accounts[addr];
-				if (!exists) {
-					account_id=lookup_account(address_str);
-					if (account_id==0) {
-						account_id,_=sql_insert_account(&addr)
-						if (account_id==0) {
-							utils.Fatalf("cant insert account at verification")
-						}
-					} else { // add account to cache
-						ethbot_instance.eb_accounts[addr]=account_id
-					}
-				}
-				if len(account_ids)>0 {
-					account_ids=account_ids+","	// comma separated for the IN() function of PG SQL query
-				}
-				account_id_string:=strconv.FormatInt(int64(account_id),10);
-				account_ids=account_ids+account_id_string
-				balance:=big.NewInt(0);
-				balance.Set(dump_balance)
-				balances_map[account_id]=balance
-				accounts_counter++
+			account_id=lookup_account(&addr);
+			if (account_id==0) {
+				set_verif_error(0,fmt.Sprintf("account %s exists in the LevelDB but doesn't exist in SQL. Reported at block_num=%d",address_str,ethbot_instance.verification.Current_block_num))
 				ethbot_instance.verification.Num_processed++
+				continue;
+			}
+			if len(account_ids)>0 {
+				account_ids=account_ids+","	// comma separated for the IN() function of PG SQL query
+			}
+			account_id_string:=strconv.FormatInt(int64(account_id),10);
+			account_ids=account_ids+account_id_string
+			balance:=big.NewInt(0);
+			balance.Set(dump_balance)
+			balances_map[account_id]=balance
+			accounts_counter++
+			ethbot_instance.verification.Num_processed++
 
 			if (accounts_counter>=VERIFICATION_LOT_SIZE) || (icount==num_accounts) {
 				var block_num Block_num_t=Block_num_t(ethbot_instance.verification.Current_block_num)
@@ -311,7 +335,7 @@ func verify_LevelDB_as_gold_standard() {
 	}
 	return;
 }
-func verify_SQLdb_as_gold_standard() {
+func verify_SQL_data_2() {
 	var bptr *types.Block
 	var block_num Block_num_t
 	blockchain:=ethbot_instance.ethereum.BlockChain()
@@ -333,35 +357,38 @@ func verify_SQLdb_as_gold_standard() {
 	}
 	return;
 }
-func verify_balance(chain *core.BlockChain,addr common.Address,account_id Account_id_t,entry *Acct_history_t) bool {
+func verify_balance(chain *core.BlockChain,addr *common.Address,account_id Account_id_t,entry *Acct_history_t) bool {
+	if (addr==nil) {
+		return true;	// the account does not exist in the blockchain (EthBot internal account) so we return true by default
+	}
 	block:=chain.GetBlockByNumber(uint64(entry.block_num))
 	if (block==nil) {
-		log.Error(fmt.Sprintf("Can't find block %v in the blockchain",entry.block_num))
+		log.Error(fmt.Sprintf("EthBot: can't find block %v in the blockchain",entry.block_num))
 		return false
 	}
 	statedb, err := chain.StateAt(block.Root())
 	if err != nil {
-		log.Error(fmt.Sprintf("StateAt(%v) failed",block.Number().Uint64()))
+		log.Error(fmt.Sprintf("EthBot: StateAt(%v) failed",block.Number().Uint64()))
 		return false
 	}
-	balance_on_chain:=statedb.GetBalance(addr)
+	balance_on_chain:=statedb.GetBalance(*addr)
 	sql_balance:=get_entry_balance(entry,account_id);
 	if balance_on_chain.Cmp(sql_balance)==0 {
 		return true
 	}
-	set_verif_error(entry.valtr_id,fmt.Sprintf("Balances does not match (blockchain) %v != %v (SQL). account_id=%v, block_num=%vv",balance_on_chain.String(),sql_balance.String(),account_id,entry.block_num))
+	set_verif_error(entry.valtr_id,fmt.Sprintf("Balances does not match (blockchain) %v != %v (SQL). account_id=%v, block_num=%v",balance_on_chain.String(),sql_balance.String(),account_id,entry.block_num))
 	return false
 }
 func get_balance_from_state(chain *core.BlockChain,addr common.Address,p_block_num Block_num_t) (*big.Int,bool) {
 	block_num:=uint64(p_block_num)
 	block:=chain.GetBlockByNumber(block_num)
 	if (block==nil) {
-		log.Error(fmt.Sprintf("Can't find block %v in the blockchain",block_num))
+		log.Error(fmt.Sprintf("EthBot: can't find block %v in the blockchain",block_num))
 		return nil,false
 	}
 	statedb, err := chain.StateAt(block.Root())
 	if err != nil {
-		log.Error(fmt.Sprintf("StateAt(%v) failed",block.Number().Uint64()))
+		log.Error(fmt.Sprintf("EthBot: StateAt(%v) failed",block.Number().Uint64()))
 		return nil,false
 	}
 	balance_on_chain:=statedb.GetBalance(addr)
@@ -387,30 +414,30 @@ func get_entry_balance(entry *Acct_history_t ,account_id Account_id_t) *big.Int 
 	}
 	return big.NewInt(0)
 }
-func balances_match(chain *core.BlockChain,addr common.Address,account_id Account_id_t,entry *Acct_history_t ,accum_balance *big.Int) bool {
-	if account_id==NONEXISTENT_ADDRESS_ACCOUNT_ID {
-		return true // thee is no State entry in the State that is accumulating all Ether created so far
-	}
+func balances_match(chain *core.BlockChain,addr *common.Address,account_id Account_id_t,entry *Acct_history_t ,accum_balance *big.Int) bool {
 	last_balance:=get_entry_balance(entry,account_id)
 	if accum_balance.Cmp(last_balance)!=0 {
-		set_verif_error(entry.valtr_id,fmt.Sprintf("Rebuilding balances from SQL data failed, accumulated balance does not match: (SQL accum in memory) %v != %v (SQL accum on disk). block_num=%v",accum_balance.String(),last_balance.String(),entry.block_num))
+		set_verif_error(entry.valtr_id,fmt.Sprintf("Rebuilding balances from SQL data failed, accumulated balance does not match: (SQL accum in memory) %v != %v (SQL accum on disk). block_num=%v, account_id=%v",accum_balance.String(),last_balance.String(),entry.block_num,account_id))
 		return false;
 	}
-	blockchain_balance,done:=get_balance_from_state(chain,addr,entry.block_num)
+	if addr==nil {
+		return true // thee is no State entry in the State that is accumulating all Ether created so far
+	}
+	blockchain_balance,done:=get_balance_from_state(chain,*addr,entry.block_num)
 	if (done) {
 		if accum_balance.Cmp(blockchain_balance)==0 {
 			return true
 		} else {
-			set_verif_error(entry.valtr_id,fmt.Sprintf("Balance on SQL doest match the blockchain (SQL) %v != %v (Blockchain) , block_num=%v",accum_balance,blockchain_balance,entry.block_num))
+			set_verif_error(entry.valtr_id,fmt.Sprintf("Balance on SQL doest match the blockchain (SQL) %v != %v (Blockchain) , block_num=%v, account_id=%v",accum_balance,blockchain_balance,entry.block_num,account_id))
 			return false
 		}
 	} else {
-		log.Error("Failed to get balance from State")
+		log.Error("EthBot: failed to get balance from State")
+		set_verif_error(entry.valtr_id,fmt.Sprintf("Failed to get state , block_num=%v, account_id=%v",entry.block_num,account_id))
 		return false
 	}
 }
-func verify_account(account_id Account_id_t,addr common.Address,block_num Block_num_t) bool {
-
+func verify_account(account_id Account_id_t,addr *common.Address,block_num Block_num_t) bool {
 	chain:=ethbot_instance.ethereum.BlockChain()
 
 	history:=sql_get_account_history(account_id,block_num)
@@ -446,13 +473,13 @@ func verify_account(account_id Account_id_t,addr common.Address,block_num Block_
 			accumulated_balance:=big.NewInt(0)
 			accumulated_balance.Add(prev_balance,accum_value)
 			if stored_balance.Cmp(accumulated_balance)!=0 {
-				set_verif_error(entry.valtr_id,fmt.Sprintf("account balance accumulated per block doesnt match at valtr_id=%v, (in memory correct balance) %v != %v (wrong balance stored in SQL)",entry.valtr_id,accumulated_balance,stored_balance))
+				set_verif_error(entry.valtr_id,fmt.Sprintf("account (account_id=%v) balance accumulated per block doesnt match at valtr_id=%v, (in memory correct balance) %v != %v (wrong balance stored in SQL)",account_id,entry.valtr_id,accumulated_balance,stored_balance))
 				return false
 			}
 		}
 		value:=big.NewInt(0)
-		value.SetString(entry.value,10)
-		if (entry.from_id!=entry.to_id) {
+		if (entry.from_id!=entry.to_id) { // not a selftransfer
+			value.SetString(entry.value,10)
 			if (account_id==entry.from_id) { // if it is a withdrawal, negate the `value`
 					value.Neg(value)
 			}
@@ -467,17 +494,24 @@ func verify_account(account_id Account_id_t,addr common.Address,block_num Block_
 		i++
 		prev_i++
 	}
+	set_verif_error(0,fmt.Sprintf("Error in verification algorithm"))
 	return false	// this is never executed
 }
 func verify_single_account(addr_str string,block_num Block_num_t) bool {
-	account_id:=lookup_account(addr_str)
+	addr:=common.HexToAddress(addr_str)
+	var addr_ptr *common.Address
+	account_id,_:=lookup_account_SQL(addr_str)
 	if account_id==0 {
-		log.Error("Account address not found, usage: verifyAccount(account_address)")
+		log.Error("EthBot: account address not found, usage: verifyAccount(account_address)")
 		return false
 	}
-	addr:=common.HexToAddress(addr_str)
+	if (account_id<0) { // internal EthBot account , `nil` is sent for verification in this case
+		addr_ptr=nil
+	} else {
+		addr_ptr=&addr
+	}
 	ethbot_instance.verification.In_progress=true
-	retval:=verify_account(Account_id_t(account_id),addr,block_num)
+	retval:=verify_account(Account_id_t(account_id),addr_ptr,block_num)
 	ethbot_instance.verification.In_progress=false
 	if retval {
 		return true
@@ -536,13 +570,13 @@ func js_remote_verify_account(arg_account_address otto.Value,arg_block_num otto.
 		return otto.FalseValue()
 	}
 	if (remote_EthBot==nil) {
-		log.Error("remote end for RPC not initalized")
+		log.Error("EthBot: remote end for RPC not initalized")
 		return  otto.FalseValue()
 	}
 	var result bool
 	err=remote_EthBot.Call(&result,"ethbot_verifyaccount",account_addr_str,block_num);
 	if (err!=nil) {
-		log.Error("Error calling RPC method ethbot_verify_account","error",err)
+		log.Error("EthBot: error calling RPC method ethbot_verify_account","error",err)
 		return otto.FalseValue()
 	} else {
 		if (result) {
@@ -579,24 +613,22 @@ func verify_all_accounts(block_num Block_num_t) bool {
 	chain:=ethbot_instance.ethereum.BlockChain()
 	block:=chain.GetBlockByNumber(uint64(block_num))
 	if (block==nil) {
-		log.Error(fmt.Sprintf("Block number %v was not found in the blockchain",int(block_num)))
+		log.Error(fmt.Sprintf("EthBot: block number %v was not found in the blockchain",int(block_num)))
 		return false
 	}
 	statedb, err := chain.StateAt(block.Root())
     if err != nil {
-		log.Error(fmt.Sprintf("StateAt(%v) failed",block.Number().Uint64()))
+		log.Error(fmt.Sprintf("EthBot: StateAt(%v) failed",block.Number().Uint64()))
 		return false
     }
 	init_verification_status(0,0,block_num)
 	ethbot_instance.verification.In_progress=true
 	accounts:=statedb.EthBotDump()
 	ethbot_instance.verification.Num_accounts=len(accounts)
-	log.Info("Verifying account balances","num_accounts",len(accounts));
 	for addr,_:=range accounts {
-		addr_str:=hex.EncodeToString(addr.Bytes())
-		account_id:=lookup_account(addr_str)
+		account_id:=lookup_account(&addr)
 		if (account_id>0) {
-			result:=verify_account(account_id,addr,Block_num_t(block_num))
+			result:=verify_account(account_id,&addr,Block_num_t(block_num))
 			if !result {
 				return false
 			}
@@ -625,13 +657,13 @@ func js_remote_verify_all_accounts(arg_block_num otto.Value) otto.Value {
 		return otto.FalseValue()
 	}
 	if (remote_EthBot==nil) {
-		log.Error("remote end for RPC not initalized")
+		log.Error("EthBot: remote end for RPC not initalized")
 		return otto.FalseValue()
 	}
 	var result bool
 	err=remote_EthBot.Call(&result,"ethbot_verifyallaccounts",block_num);
 	if (err!=nil) {
-		log.Error("Error calling RPC method ethbot_verifyallaccounts","error",err)
+		log.Error("EthBot: error calling RPC method ethbot_verifyallaccounts","error",err)
 		return otto.FalseValue()
 	} else {
 		if result {

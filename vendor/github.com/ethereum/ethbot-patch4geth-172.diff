@@ -1,0 +1,414 @@
+diff -Naur go-ethereum-1.7.2/cmd/utils/flags.go /home/ethbot/src/github.com/afterether/ethbot/vendor/github.com/ethereum/go-real-ethereum/cmd/utils/flags.go
+--- go-ethereum-1.7.2/cmd/utils/flags.go	2017-10-14 07:58:53.000000000 -0500
++++ /home/ethbot/src/github.com/afterether/ethbot/vendor/github.com/ethereum/go-real-ethereum/cmd/utils/flags.go	2018-02-16 14:15:04.000000000 -0600
+@@ -487,6 +487,10 @@
+ 		Usage: "Minimum POW accepted",
+ 		Value: whisper.DefaultMinimumPoW,
+ 	}
++	NoExportFlag = cli.BoolFlag{
++		Name:  "noexport",
++		Usage: "Disables automatic export of blockchain data to SQL database",
++	}
+ )
+ 
+ // MakeDataDir retrieves the currently requested data directory, terminating
+diff -Naur go-ethereum-1.7.2/console/console.go /home/ethbot/src/github.com/afterether/ethbot/vendor/github.com/ethereum/go-real-ethereum/console/console.go
+--- go-ethereum-1.7.2/console/console.go	2017-10-14 07:58:53.000000000 -0500
++++ /home/ethbot/src/github.com/afterether/ethbot/vendor/github.com/ethereum/go-real-ethereum/console/console.go	2018-05-15 13:38:09.033204355 -0500
+@@ -423,3 +423,6 @@
+ 	c.jsre.Stop(graceful)
+ 	return nil
+ }
++func (c *Console) JSRE() *jsre.JSRE {
++	return c.jsre
++}
+diff -Naur go-ethereum-1.7.2/core/state/dump.go /home/ethbot/src/github.com/afterether/ethbot/vendor/github.com/ethereum/go-real-ethereum/core/state/dump.go
+--- go-ethereum-1.7.2/core/state/dump.go	2017-10-14 07:58:53.000000000 -0500
++++ /home/ethbot/src/github.com/afterether/ethbot/vendor/github.com/ethereum/go-real-ethereum/core/state/dump.go	2018-02-18 11:10:35.000000000 -0600
+@@ -19,6 +19,7 @@
+ import (
+ 	"encoding/json"
+ 	"fmt"
++	"math/big"
+ 
+ 	"github.com/ethereum/go-ethereum/common"
+ 	"github.com/ethereum/go-ethereum/rlp"
+@@ -79,3 +80,20 @@
+ 
+ 	return json
+ }
++
++func (self *StateDB) EthBotDump() map[common.Address]*big.Int {
++	var dump_map map[common.Address]*big.Int = make(map[common.Address]*big.Int,0)
++
++	it := trie.NewIterator(self.trie.NodeIterator(nil))
++	for it.Next() {
++		addr := common.BytesToAddress(self.trie.GetKey(it.Key))
++		var data Account
++		if err := rlp.DecodeBytes(it.Value, &data); err != nil {
++			panic(err)
++		}
++		bal:=big.NewInt(0);
++		bal.Set(data.Balance);
++		dump_map[addr]=bal
++	}
++	return dump_map
++}
+diff -Naur go-ethereum-1.7.2/core/state/statedb.go /home/ethbot/src/github.com/afterether/ethbot/vendor/github.com/ethereum/go-real-ethereum/core/state/statedb.go
+--- go-ethereum-1.7.2/core/state/statedb.go	2017-10-14 07:58:53.000000000 -0500
++++ /home/ethbot/src/github.com/afterether/ethbot/vendor/github.com/ethereum/go-real-ethereum/core/state/statedb.go	2018-04-06 17:30:25.954113690 -0500
+@@ -187,6 +187,13 @@
+ 	}
+ 	return common.Big0
+ }
++func (self *StateDB) GetBalanceIfExists(addr common.Address) *big.Int {
++	stateObject := self.getStateObject(addr)
++	if stateObject != nil {
++		return stateObject.Balance()
++	}
++	return big.NewInt(-1)
++}
+ 
+ func (self *StateDB) GetNonce(addr common.Address) uint64 {
+ 	stateObject := self.getStateObject(addr)
+diff -Naur go-ethereum-1.7.2/core/state_transition.go /home/ethbot/src/github.com/afterether/ethbot/vendor/github.com/ethereum/go-real-ethereum/core/state_transition.go
+--- go-ethereum-1.7.2/core/state_transition.go	2017-10-14 07:58:53.000000000 -0500
++++ /home/ethbot/src/github.com/afterether/ethbot/vendor/github.com/ethereum/go-real-ethereum/core/state_transition.go	2018-05-15 14:01:53.535229208 -0500
+@@ -31,6 +31,7 @@
+ 	Big0                         = big.NewInt(0)
+ 	errInsufficientBalanceForGas = errors.New("insufficient balance to pay for gas")
+ )
++var	Vmerr4ethbot				error		// we had to introduce this variable because the error happened in the VM is lost at the end of TransitionDb()
+ 
+ /*
+ The State Transitioning Model
+@@ -210,6 +211,7 @@
+ // including the required gas for the operation as well as the used gas. It returns an error if it
+ // failed. An error indicates a consensus issue.
+ func (st *StateTransition) TransitionDb() (ret []byte, requiredGas, usedGas *big.Int, failed bool, err error) {
++	Vmerr4ethbot=nil
+ 	if err = st.preCheck(); err != nil {
+ 		return
+ 	}
+@@ -243,6 +245,7 @@
+ 		st.state.SetNonce(sender.Address(), st.state.GetNonce(sender.Address())+1)
+ 		ret, st.gas, vmerr = evm.Call(sender, st.to().Address(), st.data, st.gas, st.value)
+ 	}
++	Vmerr4ethbot=vmerr		// we just copy the error so it is available in EthBot
+ 	if vmerr != nil {
+ 		log.Debug("VM returned with error", "err", vmerr)
+ 		// The only possible consensus-error would be if there wasn't
+diff -Naur go-ethereum-1.7.2/core/vm/evm.go /home/ethbot/src/github.com/afterether/ethbot/vendor/github.com/ethereum/go-real-ethereum/core/vm/evm.go
+--- go-ethereum-1.7.2/core/vm/evm.go	2017-10-14 07:58:53.000000000 -0500
++++ /home/ethbot/src/github.com/afterether/ethbot/vendor/github.com/ethereum/go-real-ethereum/core/vm/evm.go	2018-05-15 14:02:19.645995436 -0500
+@@ -313,6 +313,7 @@
+ 	evm.StateDB.SetNonce(caller.Address(), nonce+1)
+ 
+ 	contractAddr = crypto.CreateAddress(caller.Address(), nonce)
++	ethbot_create_addr.Set(contractAddr)
+ 	contractHash := evm.StateDB.GetCodeHash(contractAddr)
+ 	if evm.StateDB.GetNonce(contractAddr) != 0 || (contractHash != (common.Hash{}) && contractHash != emptyCodeHash) {
+ 		return nil, common.Address{}, 0, ErrContractAddressCollision
+diff -Naur go-ethereum-1.7.2/core/vm/instructions.go /home/ethbot/src/github.com/afterether/ethbot/vendor/github.com/ethereum/go-real-ethereum/core/vm/instructions.go
+--- go-ethereum-1.7.2/core/vm/instructions.go	2017-10-14 07:58:53.000000000 -0500
++++ /home/ethbot/src/github.com/afterether/ethbot/vendor/github.com/ethereum/go-real-ethereum/core/vm/instructions.go	2018-05-15 13:55:10.098287209 -0500
+@@ -34,6 +34,9 @@
+ 	errReturnDataOutOfBounds = errors.New("evm: return data out of bounds")
+ 	errExecutionReverted     = errors.New("evm: execution reverted")
+ 	errMaxCodeSizeExceeded   = errors.New("evm: max code size exceeded")
++	ethbot_trace_error		error
++	ethbot_gas_error		uint64
++	ethbot_create_addr		common.Address
+ )
+ 
+ func opAdd(pc *uint64, evm *EVM, contract *Contract, memory *Memory, stack *Stack) ([]byte, error) {
+@@ -526,7 +529,9 @@
+ 	pos := stack.pop()
+ 	if !contract.jumpdests.has(contract.CodeHash, contract.Code, pos) {
+ 		nop := contract.GetOp(pos.Uint64())
+-		return nil, fmt.Errorf("invalid jump destination (%v) %v", nop, pos)
++		eee:=fmt.Errorf("invalid jump destination (%v) %v", nop, pos)
++		ethbot_trace_error=eee
++		return nil,eee
+ 	}
+ 	*pc = pos.Uint64()
+ 
+@@ -539,7 +544,9 @@
+ 	if cond.Sign() != 0 {
+ 		if !contract.jumpdests.has(contract.CodeHash, contract.Code, pos) {
+ 			nop := contract.GetOp(pos.Uint64())
+-			return nil, fmt.Errorf("invalid jump destination (%v) %v", nop, pos)
++			eee:=fmt.Errorf("invalid jump destination (%v) %v", nop, pos)
++			ethbot_trace_error=eee
++			return nil,eee
+ 		}
+ 		*pc = pos.Uint64()
+ 	} else {
+@@ -596,6 +603,8 @@
+ 	contract.Gas += returnGas
+ 	evm.interpreter.intPool.put(value, offset, size)
+ 
++	ethbot_trace_error=suberr
++	ethbot_gas_error=gas
+ 	if suberr == errExecutionReverted {
+ 		return res, nil
+ 	}
+@@ -632,7 +641,9 @@
+ 	contract.Gas += returnGas
+ 
+ 	evm.interpreter.intPool.put(addr, value, inOffset, inSize, retOffset, retSize)
+-	return ret, nil
++	ethbot_trace_error=err
++	ethbot_gas_error=gas
++	return ret, nil 
+ }
+ 
+ func opCallCode(pc *uint64, evm *EVM, contract *Contract, memory *Memory, stack *Stack) ([]byte, error) {
+@@ -666,6 +677,8 @@
+ 	contract.Gas += returnGas
+ 
+ 	evm.interpreter.intPool.put(addr, value, inOffset, inSize, retOffset, retSize)
++	ethbot_trace_error=err
++	ethbot_gas_error=gas
+ 	return ret, nil
+ }
+ 
+@@ -687,6 +700,8 @@
+ 	contract.Gas += returnGas
+ 
+ 	evm.interpreter.intPool.put(to, inOffset, inSize, outOffset, outSize)
++	ethbot_trace_error=err
++	ethbot_gas_error=gas
+ 	return ret, nil
+ }
+ 
+@@ -717,6 +732,8 @@
+ 	contract.Gas += returnGas
+ 
+ 	evm.interpreter.intPool.put(addr, inOffset, inSize, retOffset, retSize)
++	ethbot_trace_error=err
++	ethbot_gas_error=gas
+ 	return ret, nil
+ }
+ 
+diff -Naur go-ethereum-1.7.2/core/vm/interpreter.go /home/ethbot/src/github.com/afterether/ethbot/vendor/github.com/ethereum/go-real-ethereum/core/vm/interpreter.go
+--- go-ethereum-1.7.2/core/vm/interpreter.go	2017-10-14 07:58:53.000000000 -0500
++++ /home/ethbot/src/github.com/afterether/ethbot/vendor/github.com/ethereum/go-real-ethereum/core/vm/interpreter.go	2018-05-15 13:58:37.228507470 -0500
+@@ -147,7 +147,11 @@
+ 
+ 	defer func() {
+ 		if err != nil && !logged && in.cfg.Debug {
+-			in.cfg.Tracer.CaptureState(in.evm, pcCopy, op, gasCopy, cost, mem, stackCopy, contract, in.evm.depth, err)
++			_,log_pos:=in.cfg.Tracer.CaptureState(in.evm, pcCopy, op, gasCopy, cost, mem, stackCopy, contract, in.evm.depth, err)
++			in.cfg.Tracer.SetError(log_pos,ethbot_trace_error,ethbot_gas_error)	// in EVM errors between contracts are discarded, but we have to catch them
++			if op==CREATE {   // here the ethbot_create_addr will be always null because this code is executed only on error, and if an error happened, no new address has been created. but anyway, we have it here, just in case
++				in.cfg.Tracer.SetCreateAddr(log_pos,&ethbot_create_addr)	// in EVM errors between contracts are discarded, but we have to catch them
++			}
+ 		}
+ 	}()
+ 
+@@ -172,14 +176,20 @@
+ 		// Get the operation from the jump table matching the opcode and validate the
+ 		// stack and make sure there enough stack items available to perform the operation
+ 		operation := in.cfg.JumpTable[op]
++		ethbot_trace_error=nil
++		ethbot_gas_error=0
+ 		if !operation.valid {
+-			return nil, fmt.Errorf("invalid opcode 0x%x", int(op))
++			eee:=fmt.Errorf("invalid opcode 0x%x", int(op))
++			ethbot_trace_error=eee
++			return nil, eee
+ 		}
+ 		if err := operation.validateStack(stack); err != nil {
++			ethbot_trace_error=err
+ 			return nil, err
+ 		}
+ 		// If the operation is valid, enforce and write restrictions
+ 		if err := in.enforceRestrictions(op, operation, stack); err != nil {
++			ethbot_trace_error=err
+ 			return nil, err
+ 		}
+ 
+@@ -189,11 +199,13 @@
+ 		if operation.memorySize != nil {
+ 			memSize, overflow := bigUint64(operation.memorySize(stack))
+ 			if overflow {
++				ethbot_trace_error=errGasUintOverflow
+ 				return nil, errGasUintOverflow
+ 			}
+ 			// memory is expanded in words of 32 bytes. Gas
+ 			// is also calculated in words.
+ 			if memorySize, overflow = math.SafeMul(toWordSize(memSize), 32); overflow {
++				ethbot_trace_error=errGasUintOverflow
+ 				return nil, errGasUintOverflow
+ 			}
+ 		}
+@@ -203,22 +215,33 @@
+ 			// cost is explicitly set so that the capture state defer method cas get the proper cost
+ 			cost, err = operation.gasCost(in.gasTable, in.evm, contract, stack, mem, memorySize)
+ 			if err != nil || !contract.UseGas(cost) {
++				ethbot_trace_error=ErrOutOfGas
+ 				return nil, ErrOutOfGas
+ 			}
+ 		}
+ 		if memorySize > 0 {
+ 			mem.Resize(memorySize)
+ 		}
+-
++		var log_pos int = -1
+ 		if in.cfg.Debug {
+-			in.cfg.Tracer.CaptureState(in.evm, pc, op, gasCopy, cost, mem, stackCopy, contract, in.evm.depth, err)
++			_,log_pos=in.cfg.Tracer.CaptureState(in.evm, pc, op, gasCopy, cost, mem, stackCopy, contract, in.evm.depth, err)
+ 			logged = true
+ 		}
+ 
+ 		// execute the operation
+ 		res, err := operation.execute(&pc, in.evm, contract, mem, stack)
++		if (logged) {
++			if op==CREATE {
++				in.cfg.Tracer.SetCreateAddr(log_pos,&ethbot_create_addr)	// in EVM errors between contracts are discarded, but we have to catch them
++			}
++		}
+ 		// verifyPool is a build flag. Pool verification makes sure the integrity
+ 		// of the integer pool by comparing values to a default value.
++		if (ethbot_trace_error!=nil) {
++			if log_pos>-1 {
++				in.cfg.Tracer.SetError(log_pos,ethbot_trace_error,ethbot_gas_error)	// in EVM errors between contracts are discarded, but we have to catch them
++			}
++		}
+ 		if verifyPool {
+ 			verifyIntegerPool(in.intPool)
+ 		}
+diff -Naur go-ethereum-1.7.2/core/vm/logger.go /home/ethbot/src/github.com/afterether/ethbot/vendor/github.com/ethereum/go-real-ethereum/core/vm/logger.go
+--- go-ethereum-1.7.2/core/vm/logger.go	2017-10-14 07:58:53.000000000 -0500
++++ /home/ethbot/src/github.com/afterether/ethbot/vendor/github.com/ethereum/go-real-ethereum/core/vm/logger.go	2018-05-15 13:49:06.651004064 -0500
+@@ -64,6 +64,9 @@
+ 	Storage    map[common.Hash]common.Hash `json:"-"`
+ 	Depth      int                         `json:"depth"`
+ 	Err        error                       `json:"error"`
++	EthBotErr  error                       `json:"ethbot_error"`
++	GasLimit	uint64					   `json:"ethbot_gaslimit"`
++	CreateAddr	common.Address				`json: "ethbot_create_address"`
+ }
+ 
+ // overrides for gencodec
+@@ -85,8 +88,10 @@
+ // Note that reference types are actual VM data structures; make copies
+ // if you need to retain them beyond the current call.
+ type Tracer interface {
+-	CaptureState(env *EVM, pc uint64, op OpCode, gas, cost uint64, memory *Memory, stack *Stack, contract *Contract, depth int, err error) error
++	CaptureState(env *EVM, pc uint64, op OpCode, gas, cost uint64, memory *Memory, stack *Stack, contract *Contract, depth int, err error) (error,int)
+ 	CaptureEnd(output []byte, gasUsed uint64, t time.Duration, err error) error
++	SetError(pos int,new_err error,gas_limit uint64)
++	SetCreateAddr(pos int,addr_ptr *common.Address)
+ }
+ 
+ // StructLogger is an EVM state logger and implements Tracer.
+@@ -115,10 +120,10 @@
+ // CaptureState logs a new structured log message and pushes it out to the environment
+ //
+ // CaptureState also tracks SSTORE ops to track dirty values.
+-func (l *StructLogger) CaptureState(env *EVM, pc uint64, op OpCode, gas, cost uint64, memory *Memory, stack *Stack, contract *Contract, depth int, err error) error {
++func (l *StructLogger) CaptureState(env *EVM, pc uint64, op OpCode, gas, cost uint64, memory *Memory, stack *Stack, contract *Contract, depth int, err error) (error,int) {
+ 	// check if already accumulated the specified number of logs
+ 	if l.cfg.Limit != 0 && l.cfg.Limit <= len(l.logs) {
+-		return ErrTraceLimitReached
++		return ErrTraceLimitReached,-1
+ 	}
+ 
+ 	// initialise new changed values storage container for this contract
+@@ -173,10 +178,10 @@
+ 		}
+ 	}
+ 	// create a new snaptshot of the EVM.
+-	log := StructLog{pc, op, gas, cost, mem, memory.Len(), stck, storage, depth, err}
+-
++	log_len:=len(l.logs)
++	log := StructLog{pc, op, gas, cost, mem, memory.Len(), stck, storage, depth, err, nil,0,common.Address{}}
+ 	l.logs = append(l.logs, log)
+-	return nil
++	return nil,log_len
+ }
+ 
+ func (l *StructLogger) CaptureEnd(output []byte, gasUsed uint64, t time.Duration, err error) error {
+@@ -186,7 +191,19 @@
+ 	}
+ 	return nil
+ }
+-
++// EthBot functions begin
++func (l *StructLogger) SetError( pos int,new_err error,gas_limit uint64) { // required by EthBot to catch errors in internal transactions between contracts
++	if (pos>-1) {
++		l.logs[pos].EthBotErr=new_err
++		l.logs[pos].GasLimit=gas_limit
++	}
++}
++func (l *StructLogger) SetCreateAddr( pos int,addr_ptr *common.Address) { // required by EthBot to catch errors in internal transactions between contracts
++	if (pos>-1) {
++		l.logs[pos].CreateAddr.Set(*addr_ptr)
++	}
++}
++// Ethbot functions end
+ // StructLogs returns a list of captured log entries
+ func (l *StructLogger) StructLogs() []StructLog {
+ 	return l.logs
+diff -Naur go-ethereum-1.7.2/internal/ethapi/tracer.go /home/ethbot/src/github.com/afterether/ethbot/vendor/github.com/ethereum/go-real-ethereum/internal/ethapi/tracer.go
+--- go-ethereum-1.7.2/internal/ethapi/tracer.go	2017-10-14 07:58:53.000000000 -0500
++++ /home/ethbot/src/github.com/afterether/ethbot/vendor/github.com/ethereum/go-real-ethereum/internal/ethapi/tracer.go	2018-04-06 19:14:31.103067357 -0500
+@@ -317,7 +317,7 @@
+ }
+ 
+ // CaptureState implements the Tracer interface to trace a single step of VM execution
+-func (jst *JavascriptTracer) CaptureState(env *vm.EVM, pc uint64, op vm.OpCode, gas, cost uint64, memory *vm.Memory, stack *vm.Stack, contract *vm.Contract, depth int, err error) error {
++func (jst *JavascriptTracer) CaptureState(env *vm.EVM, pc uint64, op vm.OpCode, gas, cost uint64, memory *vm.Memory, stack *vm.Stack, contract *vm.Contract, depth int, err error) (error,int) {
+ 	if jst.err == nil {
+ 		jst.memory.memory = memory
+ 		jst.stack.stack = stack
+@@ -342,7 +342,7 @@
+ 			jst.err = wrapError("step", err)
+ 		}
+ 	}
+-	return nil
++	return nil,-1
+ }
+ 
+ // CaptureEnd is called after the call finishes
+@@ -350,6 +350,12 @@
+ 	//TODO! @Arachnid please figure out of there's anything we can use this method for
+ 	return nil
+ }
++func (jst *JavascriptTracer) SetError(pos int,e error,gas_limit uint64) {
++	// nothing
++}
++func (jst *JavascriptTracer) SetCreateAddr(pos int,addr *common.Address) {
++	// nothing
++}
+ 
+ // GetResult calls the Javascript 'result' function and returns its value, or any accumulated error
+ func (jst *JavascriptTracer) GetResult() (result interface{}, err error) {
+diff -Naur go-ethereum-1.7.2/internal/jsre/jsre.go /home/ethbot/src/github.com/afterether/ethbot/vendor/github.com/ethereum/go-real-ethereum/internal/jsre/jsre.go
+--- go-ethereum-1.7.2/internal/jsre/jsre.go	2017-10-14 07:58:53.000000000 -0500
++++ /home/ethbot/src/github.com/afterether/ethbot/vendor/github.com/ethereum/go-real-ethereum/internal/jsre/jsre.go	2018-02-11 09:34:16.000000000 -0600
+@@ -50,6 +50,7 @@
+ 	evalQueue     chan *evalReq
+ 	stopEventLoop chan bool
+ 	closed        chan struct{}
++	vmobj		  *otto.Otto
+ }
+ 
+ // jsTimer is a single timer instance with a callback function
+@@ -106,6 +107,7 @@
+ 	defer close(self.closed)
+ 
+ 	vm := otto.New()
++	self.vmobj=vm
+ 	r := randomSource()
+ 	vm.SetRandomSource(r.Float64)
+ 
+@@ -333,3 +335,6 @@
+ 	}
+ 	return vm.Run(script)
+ }
++func (self *JSRE) VM() *otto.Otto {
++	return self.vmobj
++}

@@ -6,6 +6,7 @@ import (
 	"os"
 	"io/ioutil"
 	"log"
+	"net"
 )
 const initdb_sql_filename string = "./init_database.sql";
 const functions_sql_filename string = "./functions.sql";
@@ -45,8 +46,12 @@ func main() {
 	}
 	plsql_sql:=string(plsql_data);
 
-	conn_str:="user='"+os.Getenv("ETHBOT_USERNAME")+"' dbname='"+os.Getenv("ETHBOT_DATABASE")+"' password='"+os.Getenv("ETHBOT_PASSWORD")+"' host='"+os.Getenv("ETHBOT_HOST")+"'";
-
+	host,port,err:=net.SplitHostPort(os.Getenv("ETHBOT_HOST"))
+	if (err!=nil) {
+		host=os.Getenv("ETHBOT_HOST")
+		port="5432"
+	}
+	conn_str:="user='"+os.Getenv("ETHBOT_USERNAME")+"' dbname='"+os.Getenv("ETHBOT_DATABASE")+"' password='"+os.Getenv("ETHBOT_PASSWORD")+"' host='"+host+"' port='"+port+"'";
 	db,err=sql.Open("postgres",conn_str);
 	if (err!=nil) {
 		log.Fatal(err);

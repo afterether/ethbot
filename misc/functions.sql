@@ -29,7 +29,7 @@ BEGIN
 			(v.from_id=p_account_id)
 		)
 	ORDER BY
-			v.block_num,v.valtr_id
+			v.block_num DESC,v.valtr_id DESC
 	LIMIT 1
 	INTO v_valtr_id,v_block_num,v_from_id,v_to_id,v_from_balance,v_to_balance;
 
@@ -48,6 +48,100 @@ BEGIN
 
 	RAISE EXCEPTION 'PSQL function to get balance failed';
 
+END;
+$$ LANGUAGE plpgsql;
+CREATE OR REPLACE FUNCTION get_blocktime(p_block_num integer)
+RETURNS numeric AS $$
+DECLARE
+	row 		record;
+	i			int;
+	avg_time	numeric;
+	prev_row	record;
+	block_time	int;
+BEGIN
+
+	IF p_block_num = -1 THEN
+		p_block_num=2147483647;
+	END IF;
+
+	CREATE UNLOGGED TABLE tmp_blocktime(
+		block_time	NUMERIC
+	);
+
+	i:=0;
+	FOR row IN
+		SELECT b.block_ts,b.block_num FROM block AS b WHERE block_num <= p_block_num ORDER BY b.block_num DESC LIMIT 1001
+	LOOP
+		IF i>1 THEN
+			IF prev_row.block_ts < row.block_ts THEN
+				RAISE NOTICE 'invalid timestamp for block %',row.block_num;
+			ELSE
+				block_time=prev_row.block_ts-row.block_ts;
+				INSERT INTO tmp_blocktime VALUES (block_time);
+			END IF;
+		END IF;
+		i:=i+1;
+		prev_row:=row;
+	END LOOP;
+
+	IF NOT FOUND THEN
+		RETURN '-1';
+	END IF;
+
+	SELECT avg(t.block_time) from tmp_blocktime AS t INTO avg_time;
+
+	DROP TABLE tmp_blocktime;
+
+	RETURN avg_time;
+END;
+$$ LANGUAGE plpgsql;
+CREATE OR REPLACE FUNCTION get_hashrate(p_block_num integer)
+RETURNS numeric AS $$
+DECLARE
+	row 		record;
+	i			int;
+	avg_time	numeric;
+	avg_diff	numeric;
+	hashrate	numeric;
+	prev_row	record;
+	block_time	int;
+BEGIN
+
+	IF p_block_num = -1 THEN
+		p_block_num=2147483647;
+	END IF;
+
+	CREATE UNLOGGED TABLE tmp_hashrate(
+		block_time	NUMERIC,
+		difficulty  NUMERIC
+	);
+
+	i:=0;
+	FOR row IN
+		SELECT b.block_ts,b.difficulty,b.block_num FROM block AS b WHERE block_num <= p_block_num ORDER BY b.block_num DESC LIMIT 1001
+	LOOP
+		IF i>1 THEN
+			IF prev_row.block_ts < row.block_ts THEN
+				RAISE NOTICE 'invalid timestamp for block %',row.block_num;
+			ELSE
+				block_time=prev_row.block_ts-row.block_ts;
+				INSERT INTO tmp_hashrate VALUES (block_time,prev_row.difficulty);
+			END IF;
+		END IF;
+		i:=i+1;
+		prev_row:=row;
+	END LOOP;
+
+	IF NOT FOUND THEN
+		RETURN '-1';
+	END IF;
+
+	SELECT avg(h.block_time),avg(h.difficulty) from tmp_hashrate AS h INTO avg_time,avg_diff;
+
+	DROP TABLE tmp_hashrate;
+
+	hashrate:=avg_diff/avg_time;
+	RETURN hashrate;
 END;
 $$ LANGUAGE plpgsql;
 CREATE OR REPLACE FUNCTION get_TXs(p_account_id integer,p_block_num integer)
@@ -79,7 +173,7 @@ BEGIN
 END;
 $$ LANGUAGE plpgsql;
 CREATE OR REPLACE FUNCTION get_VTs(p_account_id integer,p_block_num integer)
-RETURNS TABLE(valtr_id bigint,block_num int,from_id int,from_balance text,to_id int,to_balance text,value text) AS $$
+RETURNS TABLE(valtr_id bigint,block_num int,from_id int,from_balance text,to_id int,to_balance text,value text,tx_id bigint,kind char) AS $$
 BEGIN
 
 	IF p_block_num = -1 THEN
@@ -94,7 +188,9 @@ BEGIN
 		v.from_balance::text,
 		v.to_id,
 		v.to_balance::text,
-		v.value::text
+		v.value::text,
+		v.tx_id,
+		v.kind
 	FROM value_transfer v
 	WHERE
 		v.block_num<=p_block_num AND
@@ -104,6 +200,24 @@ BEGIN
 		)
 	ORDER BY
 		v.block_num DESC,v.valtr_id DESC;
+
+END;
+$$ LANGUAGE plpgsql;
+CREATE OR REPLACE FUNCTION update_last_balance() RETURNS void AS $$
+DECLARE
+	row 		record;
+	balance		numeric;
+BEGIN
+
+	FOR row IN
+		SELECT account_id FROM account order by account_id
+	LOOP
+		SELECT get_balance(row.account_id,-1) INTO balance;
+		IF balance = '-1' THEN
+			balance:=0;
+		END IF;
+		UPDATE account SET last_balance=balance WHERE account_id=row.account_id;
+	END LOOP;
 
 END;
 $$ LANGUAGE plpgsql;

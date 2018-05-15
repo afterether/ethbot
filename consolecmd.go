@@ -110,7 +110,8 @@ func localConsole(ctx *cli.Context) error {
 	if (err!=nil) {
 		utils.Fatalf("Failed to initialize ethbot JS API")
 	}
-	object.Set("verifySQLdata",js_local_verify_sql_data);
+	object.Set("verifySQLdata1",js_local_verify_sql_data_1);
+	object.Set("verifySQLdata2",js_local_verify_sql_data_2);
 	object.Set("verificationStatus",js_local_verification_status);
 	object.Set("stopVerification",js_local_stop_verification);
 	object.Set("exportBlockRange",js_local_export_block_range);
@@ -119,6 +120,9 @@ func localConsole(ctx *cli.Context) error {
 	object.Set("blockchainExportStart",js_local_blockchain_export_start);
 	object.Set("blockchainExportStop",js_local_blockchain_export_stop);
 	object.Set("blockchainExportStatus",js_local_blockchain_export_status);
+	object.Set("updateMainStats",js_local_update_main_stats);
+	object.Set("fixLastBalances",js_local_fix_last_balances);
+	object.Set("verifyLastBalances",js_local_verify_last_balances);
 
 	log.Info("Starting local console")
 	// Otherwise print the welcome screen and enter interactive mode
@@ -167,7 +171,8 @@ func remoteConsole(ctx *cli.Context) error {
 	if (err!=nil) {
 		utils.Fatalf("Failed to initialize ethbot JS API")
 	}
-	object.Set("verifySQLdata",js_remote_verify_sql_data);
+	object.Set("verifySQLdata1",js_remote_verify_sql_data_1);
+	object.Set("verifySQLdata2",js_remote_verify_sql_data_2);
 	object.Set("verificationStatus",js_remote_verification_status);
 	object.Set("stopVerification",js_remote_stop_verification);
 	object.Set("exportBlockRange",js_remote_export_block_range);
@@ -176,6 +181,9 @@ func remoteConsole(ctx *cli.Context) error {
 	object.Set("blockchainExportStart",js_remote_blockchain_export_start);
 	object.Set("blockchainExportStop",js_remote_blockchain_export_stop);
 	object.Set("blockchainExportStatus",js_remote_blockchain_export_status);
+	object.Set("updateMainStats",js_remote_update_main_stats);
+	object.Set("fixLastBalances",js_remote_fix_last_balances);
+	object.Set("verifyLastBalances",js_remote_verify_last_balances);
 	// Otherwise print the welcome screen and enter interactive mode
 	console_obj.Welcome()
 	console_obj.Interactive()

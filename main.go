@@ -136,7 +136,6 @@ func init() {
     app.HideVersion = true // we have a command to print the version
     app.Copyright = "Copyright 2013-2017 The go-ethereum Authors"
     app.Commands = []cli.Command{
-        // See chaincmd.go:
         initCommand,
         importCommand,
         consoleCommand,
@@ -182,12 +181,12 @@ func geth(ctx *cli.Context) error {
 // it unlocks any requested accounts, and starts the RPC/IPC interfaces and the
 // miner.
 func startNode(ctx *cli.Context, stack *node.Node) {
-	log.Info("EthBot node starting...")
+	log.Info("EthBot: node starting...")
 
     if err := stack.Register(
 			func(ctx *node.ServiceContext) (node.Service, error) {
-     	   		return NewEthBot(ctx)
-    		})
+				return NewEthBot(ctx)
+			})
 		err != nil {
         utils.Fatalf("Failed to register the etherquery service: %v", err)
     }
@@ -200,7 +199,7 @@ func startNode(ctx *cli.Context, stack *node.Node) {
         signal.Notify(sigc, os.Interrupt)
         defer signal.Stop(sigc)
         <-sigc
-		log.Info("Got interrupt, shutting down...")
+		log.Info("EthBot: got interrupt, shutting down...")
         go stack.Stop()
         for i := 10; i > 0; i-- {
             <-sigc
@@ -216,6 +215,8 @@ func startNode(ctx *cli.Context, stack *node.Node) {
 
 func main() {
     log.PrintOrigins(true)
+
+	//defer profile.Start(profile.MemProfile).Stop()
 
     if err := app.Run(os.Args); err != nil {
         fmt.Fprintln(os.Stderr, err)
