@@ -133,10 +133,11 @@ BEGIN
 	END LOOP;
 
 	IF NOT FOUND THEN
+		DROP TABLE tmp_hashrate;
 		RETURN '-1';
 	END IF;
 
-	SELECT avg(h.block_time),avg(h.difficulty) from tmp_hashrate AS h INTO avg_time,avg_diff;
+	SELECT avg(h.block_time)+0.0001,avg(h.difficulty) from tmp_hashrate AS h INTO avg_time,avg_diff;
 
 	DROP TABLE tmp_hashrate;
 
@@ -219,5 +220,40 @@ BEGIN
 		UPDATE account SET last_balance=balance WHERE account_id=row.account_id;
 	END LOOP;
 
+END;
+$$ LANGUAGE plpgsql;
+CREATE OR REPLACE FUNCTION get_many_balances(p_block_num integer,p_account_ids text)
+RETURNS TABLE(aid int,valtr_id bigint,block_num int,from_id int,to_id int,from_balance text,to_balance text) AS $$
+DECLARE
+	v_account_id text;
+	v_acct_int int;
+BEGIN
+
+	IF p_block_num = -1 THEN
+		p_block_num=2147483647;
+	END IF;
+	
+	FOREACH v_account_id IN array string_to_array(p_account_ids, ',')
+	LOOP
+		v_acct_int:=v_account_id::int;
+		SELECT v_acct_int,s.valtr_id,s.block_num,s.from_id,s.to_id,s.from_balance,s.to_balance FROM
+		(
+			(
+				SELECT v.valtr_id,v.block_num,v.from_id,v.to_id,v.from_balance,v.to_balance
+				FROM value_transfer v
+				WHERE (v.block_num<=p_block_num) AND (v.from_id = v_acct_int)
+			) UNION ALL (
+				SELECT v.valtr_id,v.block_num,v.from_id,v.to_id,v.from_balance,v.to_balance
+				FROM value_transfer v
+				WHERE (v.block_num<=p_block_num) AND (v.to_id = v_acct_int)
+			)
+		) AS s
+		ORDER BY s.block_num DESC,s.valtr_id DESC
+		LIMIT 1
+		INTO aid,valtr_id,block_num,from_id,to_id,from_balance,to_balance;
+
+		RETURN NEXT;
+	END LOOP;
+	RETURN;
 END;
 $$ LANGUAGE plpgsql;

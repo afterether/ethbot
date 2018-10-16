@@ -1,3 +1,20 @@
+/*
+	Copyright 2018 The AfterEther Team
+	This file is part of the EthBot, Ethereum Blockchain -> SQL converter.
+		
+	EthBot is free software: you can redistribute it and/or modify
+	it under the terms of the GNU Lesser General Public License as published by
+	the Free Software Foundation, either version 3 of the License, or
+	(at your option) any later version.
+	
+	EthBot is distributed in the hope that it will be useful,
+	but WITHOUT ANY WARRANTY; without even the implied warranty of
+	MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
+	GNU Lesser General Public License for more details.
+	
+	You should have received a copy of the GNU Lesser General Public License
+	along with EthBot. If not, see <http://www.gnu.org/licenses/>.
+*/
 package main
 import (
 )
@@ -6,6 +23,9 @@ func (ebapi *EthBotAPI) Verificationstatus() Verification_t {
 }
 func (ebapi *EthBotAPI) Blockchainexportstatus() Export_t {
 	return ethbot_instance.export
+}
+func (ebapi *EthBotAPI) Tokenexportstatus() TokenExport_t {
+	return ethbot_instance.token_export
 }
 func (ebapi *EthBotAPI) Verifysqldata1(block_num Block_num_t) bool {
 	if (block_num>-1) {
@@ -47,4 +67,22 @@ func (ebapi *EthBotAPI) Fixlastbalances() bool {
 }
 func (ebapi *EthBotAPI) Verifylastbalances() bool {
 	return ethbot_instance.verify_last_balances();
+}
+func (ebapi *EthBotAPI) Alarmson() bool {
+	return ethbot_instance.alarms_on()
+}
+func (ebapi *EthBotAPI) Alarmsoff() bool {
+	return ethbot_instance.alarms_off()
+}
+func (ebapi *EthBotAPI) Tokenexportstart(starting_block Block_num_t,ending_block Block_num_t) error {
+	return ethbot_instance.token_export_start(starting_block,ending_block)
+}
+func (ebapi *EthBotAPI) Tokenexportstop() bool {
+	return ethbot_instance.token_export_stop();
+}
+func (ebapi *EthBotAPI) Verifytoken(contract_addr_str string,block_num Block_num_t) bool {
+	return verify_token(contract_addr_str,block_num)
+}
+func (ebapi *EthBotAPI) Verifyalltokens(block_num Block_num_t) bool {
+	return verify_all_tokens(block_num)
 }

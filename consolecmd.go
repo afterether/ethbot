@@ -123,6 +123,23 @@ func localConsole(ctx *cli.Context) error {
 	object.Set("updateMainStats",js_local_update_main_stats);
 	object.Set("fixLastBalances",js_local_fix_last_balances);
 	object.Set("verifyLastBalances",js_local_verify_last_balances);
+	object.Set("tokenExportStart",js_local_token_export_start);
+	object.Set("tokenExportStop",js_local_token_export_stop);
+	object.Set("tokenExportStatus",js_local_token_export_status);
+	object.Set("verifyToken",js_local_verify_token);
+	object.Set("verifyAllTokens",js_local_verify_all_tokens);
+	object.Set("fixDeletedFlag",js_local_fix_deleted_flag);
+	object.Set("fixVTbalances",js_local_fix_vt_balances);
+	object.Set("alarmsOn",js_local_alarms_on);
+	object.Set("alarmsOff",js_local_alarms_off);
+
+	// debugging functions. only for local console
+	object.Set("debug1",debug1);
+	object.Set("debug2",debug2);
+
+	///// undocumented calls (for debugging)
+	object.Set("getBalanceIfExists",js_local_get_balance_if_exists);
+	object.Set("writeoutState",js_local_writeout_state);
 
 	log.Info("Starting local console")
 	// Otherwise print the welcome screen and enter interactive mode
@@ -184,6 +201,13 @@ func remoteConsole(ctx *cli.Context) error {
 	object.Set("updateMainStats",js_remote_update_main_stats);
 	object.Set("fixLastBalances",js_remote_fix_last_balances);
 	object.Set("verifyLastBalances",js_remote_verify_last_balances);
+	object.Set("tokenExportStart",js_remote_token_export_start);
+	object.Set("tokenExportStop",js_remote_token_export_stop);
+	object.Set("tokenExportStatus",js_remote_token_export_status);
+	object.Set("verifyToken",js_remote_verify_token);
+	object.Set("verifyAllTokens",js_remote_verify_all_tokens);
+	object.Set("alarmsOn",js_remote_alarms_on);
+	object.Set("alarmsOff",js_remote_alarms_off);
 	// Otherwise print the welcome screen and enter interactive mode
 	console_obj.Welcome()
 	console_obj.Interactive()

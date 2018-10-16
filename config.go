@@ -18,7 +18,6 @@ package main
 
 import (
 	"bufio"
-	"encoding/hex"
 	"errors"
 	"fmt"
 	"io"
@@ -29,11 +28,10 @@ import (
 	cli "gopkg.in/urfave/cli.v1"
 
 	"github.com/ethereum/go-ethereum/cmd/utils"
-	"github.com/ethereum/go-ethereum/contracts/release"
 	"github.com/ethereum/go-ethereum/eth"
 	"github.com/ethereum/go-ethereum/node"
 	"github.com/ethereum/go-ethereum/params"
-	whisper "github.com/ethereum/go-ethereum/whisper/whisperv5"
+	whisper "github.com/ethereum/go-ethereum/whisper/whisperv6"
 	"github.com/naoina/toml"
 )
 
@@ -153,37 +151,9 @@ func makeFullNode(ctx *cli.Context) *node.Node {
 
 	utils.RegisterEthService(stack, &cfg.Eth)
 
-	// Whisper must be explicitly enabled by specifying at least 1 whisper flag or in dev mode
-	shhEnabled := enableWhisper(ctx)
-	shhAutoEnabled := !ctx.GlobalIsSet(utils.WhisperEnabledFlag.Name) && ctx.GlobalIsSet(utils.DevModeFlag.Name)
-	if shhEnabled || shhAutoEnabled {
-		if ctx.GlobalIsSet(utils.WhisperMaxMessageSizeFlag.Name) {
-			cfg.Shh.MaxMessageSize = uint32(ctx.Int(utils.WhisperMaxMessageSizeFlag.Name))
-		}
-		if ctx.GlobalIsSet(utils.WhisperMinPOWFlag.Name) {
-			cfg.Shh.MinimumAcceptedPOW = ctx.Float64(utils.WhisperMinPOWFlag.Name)
-		}
-		utils.RegisterShhService(stack, &cfg.Shh)
-	}
-
 	// Add the Ethereum Stats daemon if requested.
 	if cfg.Ethstats.URL != "" {
 		utils.RegisterEthStatsService(stack, cfg.Ethstats.URL)
-	}
-
-	// Add the release oracle service so it boots along with node.
-	if err := stack.Register(func(ctx *node.ServiceContext) (node.Service, error) {
-		config := release.Config{
-			Oracle: relOracle,
-			Major:  uint32(params.VersionMajor),
-			Minor:  uint32(params.VersionMinor),
-			Patch:  uint32(params.VersionPatch),
-		}
-		commit, _ := hex.DecodeString(gitCommit)
-		copy(config.Commit[:], commit)
-		return release.NewReleaseService(ctx, config)
-	}); err != nil {
-		utils.Fatalf("Failed to register the Geth release oracle service: %v", err)
 	}
 	return stack
 }

@@ -1,0 +1,591 @@
+diff -Naur /tmp/go-ethereum-1.8.12/cmd/utils/flags.go go-ethereum-1.8.12/cmd/utils/flags.go
+--- /tmp/go-ethereum-1.8.12/cmd/utils/flags.go	2018-07-04 18:08:05.000000000 -0500
++++ go-ethereum-1.8.12/cmd/utils/flags.go	2018-07-29 11:23:59.000000000 -0500
+@@ -569,6 +569,11 @@
+ 		Usage: "InfluxDB `host` tag attached to all measurements",
+ 		Value: "localhost",
+ 	}
++        NoExportFlag = cli.BoolFlag{
++                Name:  "noexport",
++                Usage: "Disables automatic export of blockchain data to SQL database",
++        }
++
+ )
+ 
+ // MakeDataDir retrieves the currently requested data directory, terminating
+diff -Naur /tmp/go-ethereum-1.8.12/console/console.go go-ethereum-1.8.12/console/console.go
+--- /tmp/go-ethereum-1.8.12/console/console.go	2018-07-04 18:08:05.000000000 -0500
++++ go-ethereum-1.8.12/console/console.go	2018-07-29 11:29:19.000000000 -0500
+@@ -440,3 +440,6 @@
+ 	c.jsre.Stop(graceful)
+ 	return nil
+ }
++func (c *Console) JSRE() *jsre.JSRE {
++        return c.jsre
++}
+diff -Naur /tmp/go-ethereum-1.8.12/core/chain_makers.go go-ethereum-1.8.12/core/chain_makers.go
+--- /tmp/go-ethereum-1.8.12/core/chain_makers.go	2018-07-04 18:08:05.000000000 -0500
++++ go-ethereum-1.8.12/core/chain_makers.go	2018-07-29 11:32:46.000000000 -0500
+@@ -92,7 +92,9 @@
+ 		b.SetCoinbase(common.Address{})
+ 	}
+ 	b.statedb.Prepare(tx.Hash(), common.Hash{}, len(b.txs))
+-	receipt, _, err := ApplyTransaction(b.config, bc, &b.header.Coinbase, b.gasPool, b.statedb, b.header, tx, &b.header.GasUsed, vm.Config{})
++        vm_err4ethbot:=new(error)
++        vm_VTs4ethbot:=make([]*vm.Ethbot_EVM_VT_t,0,2048)       // Ethbot variables are usless here, we are just complying with calling requirements
++	receipt, _, err := ApplyTransaction(b.config, bc, &b.header.Coinbase, b.gasPool, b.statedb, b.header, tx, &b.header.GasUsed, vm.Config{},&vm_VTs4ethbot,vm_err4ethbot)
+ 	if err != nil {
+ 		panic(err)
+ 	}
+diff -Naur /tmp/go-ethereum-1.8.12/core/state/dump.go go-ethereum-1.8.12/core/state/dump.go
+--- /tmp/go-ethereum-1.8.12/core/state/dump.go	2018-07-04 18:08:05.000000000 -0500
++++ go-ethereum-1.8.12/core/state/dump.go	2018-07-29 11:35:24.000000000 -0500
+@@ -19,6 +19,7 @@
+ import (
+ 	"encoding/json"
+ 	"fmt"
++	"math/big"
+ 
+ 	"github.com/ethereum/go-ethereum/common"
+ 	"github.com/ethereum/go-ethereum/rlp"
+@@ -79,3 +80,37 @@
+ 
+ 	return json
+ }
++func (self *StateDB) EthBotDump() map[common.Address]*big.Int {
++       var dump_map map[common.Address]*big.Int = make(map[common.Address]*big.Int,0)
++
++       it := trie.NewIterator(self.trie.NodeIterator(nil))
++       for it.Next() {
++               addr := common.BytesToAddress(self.trie.GetKey(it.Key))
++               var data Account
++               if err := rlp.DecodeBytes(it.Value, &data); err != nil {
++                       panic(err)
++               }
++               bal:=big.NewInt(0);
++               bal.Set(data.Balance);
++               dump_map[addr]=bal
++       }
++       return dump_map
++}
++func (self *StateDB) GetNewIterator() *trie.Iterator {
++       it := trie.NewIterator(self.trie.NodeIterator(nil))
++       return it
++}
++func (self *StateDB) GetNextAccount(it *trie.Iterator,addr_ptr *common.Address,balance_ptr *big.Int) bool {
++       has_more_items:=it.Next()
++       if !has_more_items {
++               return false
++       }
++       addr_ptr.SetBytes(self.trie.GetKey(it.Key))
++       var data Account
++       if err := rlp.DecodeBytes(it.Value, &data); err != nil {
++               panic(err)
++       }
++       balance_ptr.Set(data.Balance)
++       return true
++}
++
+diff -Naur /tmp/go-ethereum-1.8.12/core/state/statedb.go go-ethereum-1.8.12/core/state/statedb.go
+--- /tmp/go-ethereum-1.8.12/core/state/statedb.go	2018-07-04 18:08:05.000000000 -0500
++++ go-ethereum-1.8.12/core/state/statedb.go	2018-07-29 11:36:53.000000000 -0500
+@@ -195,7 +195,13 @@
+ 	}
+ 	return common.Big0
+ }
+-
++func (self *StateDB) GetBalanceIfExists(addr common.Address) *big.Int {
++        stateObject := self.getStateObject(addr)
++        if stateObject != nil {
++                return stateObject.Balance()
++        }
++        return big.NewInt(-1)
++}
+ func (self *StateDB) GetNonce(addr common.Address) uint64 {
+ 	stateObject := self.getStateObject(addr)
+ 	if stateObject != nil {
+diff -Naur /tmp/go-ethereum-1.8.12/core/state_processor.go go-ethereum-1.8.12/core/state_processor.go
+--- /tmp/go-ethereum-1.8.12/core/state_processor.go	2018-07-04 18:08:05.000000000 -0500
++++ go-ethereum-1.8.12/core/state_processor.go	2018-07-29 11:39:44.000000000 -0500
+@@ -67,8 +67,10 @@
+ 	}
+ 	// Iterate over and process the individual transactions
+ 	for i, tx := range block.Transactions() {
++                vm_err4ethbot:=new(error)
++                vm_VTs4ethbot:=make([]*vm.Ethbot_EVM_VT_t,0,2048)  // Ethbot variables are usless here, we are just complying with calling requirements
+ 		statedb.Prepare(tx.Hash(), block.Hash(), i)
+-		receipt, _, err := ApplyTransaction(p.config, p.bc, nil, gp, statedb, header, tx, usedGas, cfg)
++		receipt, _, err := ApplyTransaction(p.config, p.bc, nil, gp, statedb, header, tx, usedGas, cfg,&vm_VTs4ethbot,vm_err4ethbot)
+ 		if err != nil {
+ 			return nil, nil, 0, err
+ 		}
+@@ -85,7 +87,7 @@
+ // and uses the input parameters for its environment. It returns the receipt
+ // for the transaction, gas used and an error if the transaction failed,
+ // indicating the block was invalid.
+-func ApplyTransaction(config *params.ChainConfig, bc ChainContext, author *common.Address, gp *GasPool, statedb *state.StateDB, header *types.Header, tx *types.Transaction, usedGas *uint64, cfg vm.Config) (*types.Receipt, uint64, error) {
++func ApplyTransaction(config *params.ChainConfig, bc ChainContext, author *common.Address, gp *GasPool, statedb *state.StateDB, header *types.Header, tx *types.Transaction, usedGas *uint64, cfg vm.Config, ethbot_transfers *[]*vm.Ethbot_EVM_VT_t, vm_err_ptr *error ) (*types.Receipt, uint64, error) {
+ 	msg, err := tx.AsMessage(types.MakeSigner(config, header.Number))
+ 	if err != nil {
+ 		return nil, 0, err
+@@ -94,7 +96,7 @@
+ 	context := NewEVMContext(msg, header, bc, author)
+ 	// Create a new environment which holds all relevant information
+ 	// about the transaction and calling mechanisms.
+-	vmenv := vm.NewEVM(context, statedb, config, cfg)
++	vmenv := vm.NewEVM(context, statedb, config, cfg, ethbot_transfers, vm_err_ptr)
+ 	// Apply the transaction to the current state (included in the env)
+ 	_, gas, failed, err := ApplyMessage(vmenv, msg, gp)
+ 	if err != nil {
+diff -Naur /tmp/go-ethereum-1.8.12/core/state_transition.go go-ethereum-1.8.12/core/state_transition.go
+--- /tmp/go-ethereum-1.8.12/core/state_transition.go	2018-07-04 18:08:05.000000000 -0500
++++ go-ethereum-1.8.12/core/state_transition.go	2018-07-29 11:41:50.000000000 -0500
+@@ -212,6 +212,7 @@
+ 		st.state.SetNonce(msg.From(), st.state.GetNonce(sender.Address())+1)
+ 		ret, st.gas, vmerr = evm.Call(sender, st.to(), st.data, st.gas, st.value)
+ 	}
++	st.evm.SetErr4Ethbot(vmerr)
+ 	if vmerr != nil {
+ 		log.Debug("VM returned with error", "err", vmerr)
+ 		// The only possible consensus-error would be if there wasn't
+diff -Naur /tmp/go-ethereum-1.8.12/core/vm/evm.go go-ethereum-1.8.12/core/vm/evm.go
+--- /tmp/go-ethereum-1.8.12/core/vm/evm.go	2018-07-04 18:08:05.000000000 -0500
++++ go-ethereum-1.8.12/core/vm/evm.go	2018-07-30 08:09:53.000000000 -0500
+@@ -24,12 +24,17 @@
+ 	"github.com/ethereum/go-ethereum/common"
+ 	"github.com/ethereum/go-ethereum/crypto"
+ 	"github.com/ethereum/go-ethereum/params"
++
++        "github.com/ethereum/go-ethereum/log"
++        "encoding/hex"
++        "fmt"
+ )
+ 
+ // emptyCodeHash is used by create to ensure deployment is disallowed to already
+ // deployed contract addresses (relevant after the account abstraction).
+ var emptyCodeHash = crypto.Keccak256Hash(nil)
+-
++const Ethbot_debug bool = false
++const Ethbot_show_op bool = false
+ type (
+ 	// CanTransferFunc is the signature of a transfer guard function
+ 	CanTransferFunc func(StateDB, common.Address, *big.Int) bool
+@@ -39,6 +44,16 @@
+ 	// and is used by the BLOCKHASH EVM op code.
+ 	GetHashFunc func(uint64) common.Hash
+ )
++type Ethbot_EVM_VT_t struct {
++        From                    common.Address
++        To                              common.Address
++        Value                   big.Int
++        Err                             error
++        Kind                    int
++        Depth                   int
++        GasLimit                uint64
++        GasUsed                 uint64
++}
+ 
+ // run runs the given contract and takes care of running precompiles with a fallback to the byte code interpreter.
+ func run(evm *EVM, contract *Contract, input []byte) ([]byte, error) {
+@@ -111,17 +126,22 @@
+ 	// available gas is calculated in gasCall* according to the 63/64 rule and later
+ 	// applied in opCall*.
+ 	callGasTemp uint64
++	// Collects all the value transfers inside the VM , for further use by EthBot
++        Ethbot_Value_Transfers *[]*Ethbot_EVM_VT_t
++        Vmerr4ethbot *error                     // returns error occured in VM to Ethbot
+ }
+ 
+ // NewEVM returns a new EVM. The returned EVM is not thread safe and should
+ // only ever be used *once*.
+-func NewEVM(ctx Context, statedb StateDB, chainConfig *params.ChainConfig, vmConfig Config) *EVM {
++func NewEVM(ctx Context, statedb StateDB, chainConfig *params.ChainConfig, vmConfig Config,ethbot_transfers *[]*Ethbot_EVM_VT_t, vm_err_ptr *error) *EVM {
+ 	evm := &EVM{
+ 		Context:     ctx,
+ 		StateDB:     statedb,
+ 		vmConfig:    vmConfig,
+ 		chainConfig: chainConfig,
+ 		chainRules:  chainConfig.Rules(ctx.BlockNumber),
++                Ethbot_Value_Transfers: ethbot_transfers,
++                Vmerr4ethbot: vm_err_ptr,
+ 	}
+ 
+ 	evm.interpreter = NewInterpreter(evm, vmConfig)
+@@ -172,7 +192,24 @@
+ 		evm.StateDB.CreateAccount(addr)
+ 	}
+ 	evm.Transfer(evm.StateDB, caller.Address(), to.Address(), value)
+-
++        if Ethbot_debug {
++		log.Info(fmt.Sprintf("EVM:Call from %v to %v (%v) at depth %v gas=%v)",hex.EncodeToString(caller.Address().Bytes()),hex.EncodeToString(to.Address().Bytes()),value.String(),evm.depth,gas))
++        }
++
++        kind:=2
++        if (evm.depth>0) {
++                kind=6
++        }
++        evm_vt:=&Ethbot_EVM_VT_t {
++                From:   caller.Address(),
++                To:     to.Address(),
++                Kind:   kind,
++                Depth:  evm.depth,
++        }
++        evm_vt.Value.Set(value)
++        if caller.Address() != (common.Address{}) {
++                *evm.Ethbot_Value_Transfers=append(*evm.Ethbot_Value_Transfers,evm_vt)
++        }
+ 	// Initialise a new contract and set the code that is to be used by the EVM.
+ 	// The contract is a scoped environment for this execution context only.
+ 	contract := NewContract(caller, to, value, gas)
+@@ -188,17 +225,45 @@
+ 			evm.vmConfig.Tracer.CaptureEnd(ret, gas-contract.Gas, time.Since(start), err)
+ 		}()
+ 	}
++	saved_VTs_len:=len(*evm.Ethbot_Value_Transfers)
+ 	ret, err = run(evm, contract, input)
+ 
+ 	// When an error was returned by the EVM or when setting the creation code
+ 	// above we revert to the snapshot and consume any gas remaining. Additionally
+ 	// when we're in homestead this also counts for code storage gas errors.
++        if Ethbot_debug {
++                log.Info(fmt.Sprintf("err=%v, len(Eb_EVM_TVs)=%v, val=%v",err,len(*evm.Ethbot_Value_Transfers),evm_vt.Value.String()))
++        }
++        evm_vt.Err=err  // update error for the first Call(), as we only know the error status after execution
++        evm_vt.GasUsed=contract.Gas
++        evm_vt.GasLimit=gas
++        error_flag:=false
++        if (err!=nil) {
++                error_flag=true
++        }
+ 	if err != nil {
+ 		evm.StateDB.RevertToSnapshot(snapshot)
+ 		if err != errExecutionReverted {
++                        evm_vt.Err=err          // this Ethbot code doesn't make sense, but we will keep it for the sake of the same code structure as in opCreate()
++                        error_flag=true
++                        if Ethbot_debug {
++                                log.Info(fmt.Sprintf("Execution reverted for valtransfer from %v to %v",hex.EncodeToString(evm_vt.From.Bytes()),hex.EncodeToString(evm_vt.To.Bytes())))
++                        }
+ 			contract.UseGas(contract.Gas)
+ 		}
+ 	}
++        if (error_flag) {
++                vt_len:=len(*evm.Ethbot_Value_Transfers)
++                for i:=saved_VTs_len;i<vt_len;i++ {     // in this loop update Error status for all the child Call()s that the first Call() has spawned
++                        entry:=(*evm.Ethbot_Value_Transfers)[i]
++                        if (entry.Depth>evm_vt.Depth) {                 // only Call's with depth above current depth are invalidated
++                                entry.Err=err
++                        }
++                        if Ethbot_debug {
++                                log.Info(fmt.Sprintf("Updated failure status for vt %v -> %v for %v (err=%v)",hex.EncodeToString(entry.From.Bytes()),hex.EncodeToString(entry.To.Bytes()),entry.Value.String(),entry.Err))
++                        }
++                }
++        }
+ 	return ret, contract.Gas, err
+ }
+ 
+@@ -324,10 +389,22 @@
+ 
+ 	// Depth check execution. Fail if we're trying to execute above the
+ 	// limit.
++        evm_vt:=&Ethbot_EVM_VT_t {
++                From:   caller.Address(),
++                To:             common.Address{},
++                Kind:   5,
++                Depth:  evm.depth,
++        }
++        evm_vt.Value.Set(value)
++        if caller.Address()!= (common.Address{}) {
++                *evm.Ethbot_Value_Transfers=append(*evm.Ethbot_Value_Transfers,evm_vt)
++        }
+ 	if evm.depth > int(params.CallCreateDepth) {
++		evm_vt.Err=ErrDepth
+ 		return nil, common.Address{}, gas, ErrDepth
+ 	}
+ 	if !evm.CanTransfer(evm.StateDB, caller.Address(), value) {
++		evm_vt.Err=ErrInsufficientBalance
+ 		return nil, common.Address{}, gas, ErrInsufficientBalance
+ 	}
+ 	// Ensure there's no existing contract already at the designated address
+@@ -335,8 +412,10 @@
+ 	evm.StateDB.SetNonce(caller.Address(), nonce+1)
+ 
+ 	contractAddr = crypto.CreateAddress(caller.Address(), nonce)
++	evm_vt.To=contractAddr
+ 	contractHash := evm.StateDB.GetCodeHash(contractAddr)
+ 	if evm.StateDB.GetNonce(contractAddr) != 0 || (contractHash != (common.Hash{}) && contractHash != emptyCodeHash) {
++		evm_vt.Err=ErrContractAddressCollision
+ 		return nil, common.Address{}, 0, ErrContractAddressCollision
+ 	}
+ 	// Create a new account on the state
+@@ -346,7 +425,9 @@
+ 		evm.StateDB.SetNonce(contractAddr, 1)
+ 	}
+ 	evm.Transfer(evm.StateDB, caller.Address(), contractAddr, value)
+-
++        if Ethbot_debug {
++                log.Info(fmt.Sprintf("EVM: Create transfer from %v to %v for %v",hex.EncodeToString(caller.Address().Bytes()),hex.EncodeToString(contractAddr.Bytes()),value.String()))
++        }
+ 	// initialise a new contract and set the code that is to be used by the
+ 	// EVM. The contract is a scoped environment for this execution context
+ 	// only.
+@@ -361,9 +442,15 @@
+ 		evm.vmConfig.Tracer.CaptureStart(caller.Address(), contractAddr, true, code, gas, value)
+ 	}
+ 	start := time.Now()
+-
++	saved_VTs_len:=len(*evm.Ethbot_Value_Transfers)
+ 	ret, err = run(evm, contract, nil)
+-
++        evm_vt.Err=err  // update error for the first Call(), as we only know the error status after execution
++        evm_vt.GasUsed=contract.Gas
++        evm_vt.GasLimit=gas
++        error_flag:=false
++        if (err!=nil) {
++                error_flag=true
++        }
+ 	// check whether the max code size has been exceeded
+ 	maxCodeSizeExceeded := evm.ChainConfig().IsEIP158(evm.BlockNumber) && len(ret) > params.MaxCodeSize
+ 	// if the contract creation ran successfully and no errors were returned
+@@ -386,12 +473,36 @@
+ 		evm.StateDB.RevertToSnapshot(snapshot)
+ 		if err != errExecutionReverted {
+ 			contract.UseGas(contract.Gas)
++                        if (err!=nil) {
++                                evm_vt.Err=err
++                                error_flag=true
++                        }
+ 		}
+ 	}
+ 	// Assign err if contract code size exceeds the max while the err is still empty.
+ 	if maxCodeSizeExceeded && err == nil {
+ 		err = errMaxCodeSizeExceeded
++                evm_vt.Err=err
++                error_flag=true
+ 	}
++        if (error_flag) {                       // no all the errors affect transfers, so we use `error_flag` to know when
++                vt_len:=len(*evm.Ethbot_Value_Transfers)
++                if Ethbot_debug {
++                        log.Info(fmt.Sprintf("Updating error for Ethbot_EVM_Value_Transfers: saved_VTs_len=%v vt_len=%v ",saved_VTs_len,vt_len))
++                }
++                for i:=saved_VTs_len;i<vt_len;i++ {     // in this loop update Error status for all the child Call()s that the first Call() has spawned
++                        entry:=(*evm.Ethbot_Value_Transfers)[i]
++                        if (entry.Depth>evm_vt.Depth) {                 // only Call's with depth above current depth are invalidated
++                                if Ethbot_debug {
++                                        log.Info(fmt.Sprintf("Updated failure status for transfer %v (%v)",i,entry.Value.String()))
++                                }
++                                entry.Err=err
++                        }
++                }
++        }
++        if Ethbot_debug {
++                log.Info(fmt.Sprintf("evm.Create() returns err=%v, contract.Gas=%v, entry.Error=%v",err,contract.Gas,evm_vt.Err))
++        }
+ 	if evm.vmConfig.Debug && evm.depth == 0 {
+ 		evm.vmConfig.Tracer.CaptureEnd(ret, gas-contract.Gas, time.Since(start), err)
+ 	}
+@@ -403,3 +514,6 @@
+ 
+ // Interpreter returns the EVM interpreter
+ func (evm *EVM) Interpreter() *Interpreter { return evm.interpreter }
++func (evm *EVM) SetErr4Ethbot(p_err error) {
++        *evm.Vmerr4ethbot=p_err
++}
+diff -Naur /tmp/go-ethereum-1.8.12/core/vm/instructions.go go-ethereum-1.8.12/core/vm/instructions.go
+--- /tmp/go-ethereum-1.8.12/core/vm/instructions.go	2018-07-04 18:08:05.000000000 -0500
++++ go-ethereum-1.8.12/core/vm/instructions.go	2018-07-29 13:18:51.000000000 -0500
+@@ -26,6 +26,9 @@
+ 	"github.com/ethereum/go-ethereum/core/types"
+ 	"github.com/ethereum/go-ethereum/crypto"
+ 	"github.com/ethereum/go-ethereum/params"
++
++        "github.com/ethereum/go-ethereum/log"
++        "encoding/hex"
+ )
+ 
+ var (
+@@ -649,6 +652,9 @@
+ 	// homestead we must check for CodeStoreOutOfGasError (homestead only
+ 	// rule) and treat as an error, if the ruleset is frontier we must
+ 	// ignore this error and pretend the operation was successful.
++        if Ethbot_debug {
++                log.Info(fmt.Sprintf("return from opCreate:  addr=%v, depth=%v",hex.EncodeToString(addr.Bytes()),evm.depth))
++        }
+ 	if evm.ChainConfig().IsHomestead(evm.BlockNumber) && suberr == ErrCodeStoreOutOfGas {
+ 		stack.push(evm.interpreter.intPool.getZero())
+ 	} else if suberr != nil && suberr != ErrCodeStoreOutOfGas {
+@@ -795,8 +801,23 @@
+ 
+ func opSuicide(pc *uint64, evm *EVM, contract *Contract, memory *Memory, stack *Stack) ([]byte, error) {
+ 	balance := evm.StateDB.GetBalance(contract.Address())
+-	evm.StateDB.AddBalance(common.BigToAddress(stack.pop()), balance)
+-
++	to_addr:=common.BigToAddress(stack.pop())
++//	evm.StateDB.AddBalance(common.BigToAddress(stack.pop()), balance)
++        evm.StateDB.AddBalance(to_addr, balance)
++        from_addr:=contract.Address()
++        from:=hex.EncodeToString(from_addr.Bytes())
++        to:=hex.EncodeToString(to_addr.Bytes())
++        if Ethbot_debug {
++                log.Info(fmt.Sprintf("EVM: suicide transfer from %v to %v",from,to))
++        } 
++        evm_vt:=&Ethbot_EVM_VT_t {
++                From:   from_addr,
++                To:             to_addr,
++                Kind:   7,
++                Depth:  evm.depth,
++        }
++        evm_vt.Value.Set(balance)
++        *evm.Ethbot_Value_Transfers=append(*evm.Ethbot_Value_Transfers,evm_vt)
+ 	evm.StateDB.Suicide(contract.Address())
+ 	return nil, nil
+ }
+diff -Naur /tmp/go-ethereum-1.8.12/core/vm/interpreter.go go-ethereum-1.8.12/core/vm/interpreter.go
+--- /tmp/go-ethereum-1.8.12/core/vm/interpreter.go	2018-07-04 18:08:05.000000000 -0500
++++ go-ethereum-1.8.12/core/vm/interpreter.go	2018-07-29 13:22:58.000000000 -0500
+@@ -22,6 +22,8 @@
+ 
+ 	"github.com/ethereum/go-ethereum/common/math"
+ 	"github.com/ethereum/go-ethereum/params"
++
++        "github.com/ethereum/go-ethereum/log"
+ )
+ 
+ // Config are the configuration options for the Interpreter
+@@ -193,6 +195,10 @@
+ 				return nil, errGasUintOverflow
+ 			}
+ 		}
++                if Ethbot_show_op {
++                        eb_cost, eb_err := operation.gasCost(in.gasTable, in.evm, contract, stack, mem, memorySize)
++                        log.Info(fmt.Sprintf("(eb_err=%v) op=%v, PC=%v Depth=%v gas used = %v , gas cost = %v",eb_err,op,pc,in.evm.depth,contract.Gas,eb_cost))
++                }
+ 		// consume the gas and return an error if not enough gas is available.
+ 		// cost is explicitly set so that the capture state defer method can get the proper cost
+ 		cost, err = operation.gasCost(in.gasTable, in.evm, contract, stack, mem, memorySize)
+diff -Naur /tmp/go-ethereum-1.8.12/eth/api_backend.go go-ethereum-1.8.12/eth/api_backend.go
+--- /tmp/go-ethereum-1.8.12/eth/api_backend.go	2018-07-04 18:08:05.000000000 -0500
++++ go-ethereum-1.8.12/eth/api_backend.go	2018-07-29 13:29:46.000000000 -0500
+@@ -134,7 +134,9 @@
+ 	vmError := func() error { return nil }
+ 
+ 	context := core.NewEVMContext(msg, header, b.eth.BlockChain(), nil)
+-	return vm.NewEVM(context, state, b.eth.chainConfig, vmCfg), vmError, nil
++        vm_err4ethbot:=new(error)
++        vm_VTs4ethbot:=make([]*vm.Ethbot_EVM_VT_t,0,64)  // Ethbot variables are usless here, we are just complying with calling requirements 
++	return vm.NewEVM(context, state, b.eth.chainConfig, vmCfg,&vm_VTs4ethbot,vm_err4ethbot), vmError, nil
+ }
+ 
+ func (b *EthAPIBackend) SubscribeRemovedLogsEvent(ch chan<- core.RemovedLogsEvent) event.Subscription {
+diff -Naur /tmp/go-ethereum-1.8.12/eth/api_tracer.go go-ethereum-1.8.12/eth/api_tracer.go
+--- /tmp/go-ethereum-1.8.12/eth/api_tracer.go	2018-07-04 18:08:05.000000000 -0500
++++ go-ethereum-1.8.12/eth/api_tracer.go	2018-07-29 13:33:14.000000000 -0500
+@@ -448,8 +448,9 @@
+ 		// Generate the next state snapshot fast without tracing
+ 		msg, _ := tx.AsMessage(signer)
+ 		vmctx := core.NewEVMContext(msg, block.Header(), api.eth.blockchain, nil)
+-
+-		vmenv := vm.NewEVM(vmctx, statedb, api.config, vm.Config{})
++	        vm_err4ethbot:=new(error)
++        	vm_VTs4ethbot:=make([]*vm.Ethbot_EVM_VT_t,0,64)  // Ethbot variables are usless here, we are just complying with calling requirement
++		vmenv := vm.NewEVM(vmctx, statedb, api.config, vm.Config{},&vm_VTs4ethbot,vm_err4ethbot)
+ 		if _, _, _, err := core.ApplyMessage(vmenv, msg, new(core.GasPool).AddGas(msg.Gas())); err != nil {
+ 			failed = err
+ 			break
+@@ -591,7 +592,9 @@
+ 		tracer = vm.NewStructLogger(config.LogConfig)
+ 	}
+ 	// Run the transaction with tracing enabled.
+-	vmenv := vm.NewEVM(vmctx, statedb, api.config, vm.Config{Debug: true, Tracer: tracer})
++        vm_err4ethbot:=new(error)
++        vm_VTs4ethbot:=make([]*vm.Ethbot_EVM_VT_t,0,64)  // Ethbot variables are usless here, we are just complying with calling requirement
++	vmenv := vm.NewEVM(vmctx, statedb, api.config, vm.Config{Debug: true, Tracer: tracer},&vm_VTs4ethbot,vm_err4ethbot)
+ 
+ 	ret, gas, failed, err := core.ApplyMessage(vmenv, message, new(core.GasPool).AddGas(message.Gas()))
+ 	if err != nil {
+@@ -641,7 +644,9 @@
+ 			return msg, context, statedb, nil
+ 		}
+ 		// Not yet the searched for transaction, execute on top of the current state
+-		vmenv := vm.NewEVM(context, statedb, api.config, vm.Config{})
++        	vm_err4ethbot:=new(error)
++	        vm_VTs4ethbot:=make([]*vm.Ethbot_EVM_VT_t,0,64)  // Ethbot variables are usless here, we are just complying with calling requirement
++		vmenv := vm.NewEVM(context, statedb, api.config, vm.Config{},&vm_VTs4ethbot,vm_err4ethbot)
+ 		if _, _, _, err := core.ApplyMessage(vmenv, msg, new(core.GasPool).AddGas(tx.Gas())); err != nil {
+ 			return nil, vm.Context{}, nil, fmt.Errorf("tx %x failed: %v", tx.Hash(), err)
+ 		}
+diff -Naur /tmp/go-ethereum-1.8.12/internal/jsre/jsre.go go-ethereum-1.8.12/internal/jsre/jsre.go
+--- /tmp/go-ethereum-1.8.12/internal/jsre/jsre.go	2018-07-04 18:08:05.000000000 -0500
++++ go-ethereum-1.8.12/internal/jsre/jsre.go	2018-07-29 13:45:19.000000000 -0500
+@@ -50,6 +50,7 @@
+ 	evalQueue     chan *evalReq
+ 	stopEventLoop chan bool
+ 	closed        chan struct{}
++	vmobj             *otto.Otto
+ }
+ 
+ // jsTimer is a single timer instance with a callback function
+@@ -106,6 +107,7 @@
+ 	defer close(re.closed)
+ 
+ 	vm := otto.New()
++	re.vmobj=vm
+ 	r := randomSource()
+ 	vm.SetRandomSource(r.Float64)
+ 
+@@ -333,3 +335,6 @@
+ 	}
+ 	return vm.Run(script)
+ }
++func (self *JSRE) VM() *otto.Otto {
++        return self.vmobj
++}
+diff -Naur /tmp/go-ethereum-1.8.12/les/api_backend.go go-ethereum-1.8.12/les/api_backend.go
+--- /tmp/go-ethereum-1.8.12/les/api_backend.go	2018-07-04 18:08:05.000000000 -0500
++++ go-ethereum-1.8.12/les/api_backend.go	2018-07-29 13:35:42.000000000 -0500
+@@ -105,7 +105,9 @@
+ func (b *LesApiBackend) GetEVM(ctx context.Context, msg core.Message, state *state.StateDB, header *types.Header, vmCfg vm.Config) (*vm.EVM, func() error, error) {
+ 	state.SetBalance(msg.From(), math.MaxBig256)
+ 	context := core.NewEVMContext(msg, header, b.eth.blockchain, nil)
+-	return vm.NewEVM(context, state, b.eth.chainConfig, vmCfg), state.Error, nil
++        vm_err4ethbot:=new(error)
++        vm_VTs4ethbot:=make([]*vm.Ethbot_EVM_VT_t,0,2048)  // Ethbot variables are usless here, we are just complying with calling requirement
++	return vm.NewEVM(context, state, b.eth.chainConfig, vmCfg,&vm_VTs4ethbot,vm_err4ethbot), state.Error, nil
+ }
+ 
+ func (b *LesApiBackend) SendTx(ctx context.Context, signedTx *types.Transaction) error {
+diff -Naur /tmp/go-ethereum-1.8.12/miner/worker.go go-ethereum-1.8.12/miner/worker.go
+--- /tmp/go-ethereum-1.8.12/miner/worker.go	2018-07-04 18:08:05.000000000 -0500
++++ go-ethereum-1.8.12/miner/worker.go	2018-07-29 13:37:58.000000000 -0500
+@@ -606,7 +606,9 @@
+ func (env *Work) commitTransaction(tx *types.Transaction, bc *core.BlockChain, coinbase common.Address, gp *core.GasPool) (error, []*types.Log) {
+ 	snap := env.state.Snapshot()
+ 
+-	receipt, _, err := core.ApplyTransaction(env.config, bc, &coinbase, gp, env.state, env.header, tx, &env.header.GasUsed, vm.Config{})
++        vm_err4ethbot:=new(error)
++        vm_VTs4ethbot:=make([]*vm.Ethbot_EVM_VT_t,0,2048)  // Ethbot variables are usless here, we are just complying with calling requirements
++	receipt, _, err := core.ApplyTransaction(env.config, bc, &coinbase, gp, env.state, env.header, tx, &env.header.GasUsed, vm.Config{},&vm_VTs4ethbot,vm_err4ethbot)
+ 	if err != nil {
+ 		env.state.RevertToSnapshot(snap)
+ 		return err, nil
+diff -Naur /tmp/difference/go-ethereum-1.8.12/cmd/utils/flags.go go-ethereum/cmd/utils/flags.go
+--- /tmp/difference/go-ethereum-1.8.12/cmd/utils/flags.go	2018-07-29 11:23:59.000000000 -0500
++++ go-ethereum/cmd/utils/flags.go	2018-07-31 14:02:44.802805923 -0500
+@@ -166,7 +166,8 @@
+ 		Name:  "light",
+ 		Usage: "Enable light client mode (replaced by --syncmode)",
+ 	}
+-	defaultSyncMode = eth.DefaultConfig.SyncMode
++	//defaultSyncMode = eth.DefaultConfig.SyncMode
++	defaultSyncMode = downloader.FullSync
+ 	SyncModeFlag    = TextMarshalerFlag{
+ 		Name:  "syncmode",
+ 		Usage: `Blockchain sync mode ("fast", "full", or "light")`,
+@@ -175,7 +176,7 @@
+ 	GCModeFlag = cli.StringFlag{
+ 		Name:  "gcmode",
+ 		Usage: `Blockchain garbage collection mode ("full", "archive")`,
+-		Value: "full",
++		Value: "archive",
+ 	}
+ 	LightServFlag = cli.IntFlag{
+ 		Name:  "lightserv",

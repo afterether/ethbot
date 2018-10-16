@@ -1,0 +1,259 @@
+diff -Naur go-ethereum-1.8.12/afterether-genesis.json go-afterether-1.8.12/afterether-genesis.json
+--- go-ethereum-1.8.12/afterether-genesis.json	1969-12-31 18:00:00.000000000 -0600
++++ go-afterether-1.8.12/afterether-genesis.json	2018-07-30 08:42:25.250850622 -0500
+@@ -0,0 +1,18 @@
++{
++	"config": {
++		"homesteadBlock": 1,
++		"eip150Block": 1,
++		"eip155Block": 151075,
++		"eip158Block": 1,
++		"chainId":233,
++		"byzantiumBlock": 1,
++		"DAOForkBlock": 1
++	},
++	"difficulty":"2100",
++	"gasLimit":"2100000",
++	"alloc": {
++		"da7962f26e426fa3b3a005a100e1683e8f733760": {
++			"balance":"10000000000000000000000000"
++		}
++	}
++}
+diff -Naur go-ethereum-1.8.12/consensus/ethash/consensus.go go-afterether-1.8.12/consensus/ethash/consensus.go
+--- go-ethereum-1.8.12/consensus/ethash/consensus.go	2018-07-04 18:08:05.000000000 -0500
++++ go-afterether-1.8.12/consensus/ethash/consensus.go	2018-07-30 08:49:37.810700176 -0500
+@@ -37,7 +37,7 @@
+ // Ethash proof-of-work protocol constants.
+ var (
+ 	FrontierBlockReward    *big.Int = big.NewInt(5e+18) // Block reward in wei for successfully mining a block
+-	ByzantiumBlockReward   *big.Int = big.NewInt(3e+18) // Block reward in wei for successfully mining a block upward from Byzantium
++	byzantiumBlockReward *big.Int = big.NewInt(5e+18) // Block reward in wei for successfully mining a block upward from Byzantium
+ 	maxUncles                       = 2                 // Maximum number of uncles allowed in a single block
+ 	allowedFutureBlockTime          = 15 * time.Second  // Max time from current time allowed for blocks, before they're considered future blocks
+ )
+@@ -295,15 +295,7 @@
+ // the difficulty that a new block should have when created at time
+ // given the parent block's time and difficulty.
+ func CalcDifficulty(config *params.ChainConfig, time uint64, parent *types.Header) *big.Int {
+-	next := new(big.Int).Add(parent.Number, big1)
+-	switch {
+-	case config.IsByzantium(next):
+-		return calcDifficultyByzantium(time, parent)
+-	case config.IsHomestead(next):
+-		return calcDifficultyHomestead(time, parent)
+-	default:
+-		return calcDifficultyFrontier(time, parent)
+-	}
++	return calcDifficultyAfterEther(time, parent)
+ }
+ 
+ // Some weird constants to avoid constant memory allocs for them.
+@@ -317,6 +309,38 @@
+ 	big2999999    = big.NewInt(2999999)
+ )
+ 
++func calcDifficultyAfterEther(time uint64, parent *types.Header) *big.Int {
++// Same algorithm as Byzantium but without the exponential factor
++        bigTime := new(big.Int).SetUint64(time)
++        bigParentTime := new(big.Int).Set(parent.Time)
++
++        // holds intermediate values to make the algo easier to read & audit
++        x := new(big.Int)
++        y := new(big.Int)
++
++        // (2 if len(parent_uncles) else 1) - (block_timestamp - parent_timestamp) // 9
++        x.Sub(bigTime, bigParentTime)
++        x.Div(x, big9)
++        if parent.UncleHash == types.EmptyUncleHash {
++                x.Sub(big1, x)
++        } else {
++                x.Sub(big2, x)
++        }
++        // max((2 if len(parent_uncles) else 1) - (block_timestamp - parent_timestamp) // 9, -99)
++        if x.Cmp(bigMinus99) < 0 {
++                x.Set(bigMinus99)
++        }
++        // (parent_diff + parent_diff // 2048 * max(1 - (block_timestamp - parent_timestamp) // 10, -99))
++        y.Div(parent.Difficulty, params.DifficultyBoundDivisor)
++        x.Mul(y, x)
++        x.Add(parent.Difficulty, x)
++
++        // minimum difficulty can ever be (before exponential factor)
++        if x.Cmp(params.MinimumDifficulty) < 0 {
++                x.Set(params.MinimumDifficulty)
++        }
++        return x
++}
+ // calcDifficultyByzantium is the difficulty adjustment algorithm. It returns
+ // the difficulty that a new block should have when created at time given the
+ // parent block's time and difficulty. The calculation uses the Byzantium rules.
+@@ -526,6 +550,7 @@
+ var (
+ 	big8  = big.NewInt(8)
+ 	big32 = big.NewInt(32)
++	reward_block=big.NewInt(154865)
+ )
+ 
+ // AccumulateRewards credits the coinbase of the given block with the mining
+@@ -535,7 +560,11 @@
+ 	// Select the correct block reward based on chain progression
+ 	blockReward := FrontierBlockReward
+ 	if config.IsByzantium(header.Number) {
+-		blockReward = ByzantiumBlockReward
++                if (header.Number.Cmp(reward_block)>0) {
++                        blockReward=big.NewInt(2e+18);
++                } else {
++                        blockReward = byzantiumBlockReward
++                }
+ 	}
+ 	// Accumulate the rewards for the miner and any included uncles
+ 	reward := new(big.Int).Set(blockReward)
+diff -Naur go-ethereum-1.8.12/core/genesis_aet_alloc.go go-afterether-1.8.12/core/genesis_aet_alloc.go
+--- go-ethereum-1.8.12/core/genesis_aet_alloc.go	1969-12-31 18:00:00.000000000 -0600
++++ go-afterether-1.8.12/core/genesis_aet_alloc.go	2018-07-30 08:50:52.084731131 -0500
+@@ -0,0 +1,2 @@
++package core
++const AETallocData = "\xe2\xe1\x94\xdayb\xf2nBo\xa3\xb3\xa0\x05\xa1\x00\xe1h>\x8fs7`\x8b\bE\x95\x16\x14\x01HJ\x00\x00\x00"
+diff -Naur go-ethereum-1.8.12/core/genesis.go go-afterether-1.8.12/core/genesis.go
+--- go-ethereum-1.8.12/core/genesis.go	2018-07-04 18:08:05.000000000 -0500
++++ go-afterether-1.8.12/core/genesis.go	2018-07-30 09:18:22.230573504 -0500
+@@ -160,7 +160,7 @@
+ 	if (stored == common.Hash{}) {
+ 		if genesis == nil {
+ 			log.Info("Writing default main-net genesis block")
+-			genesis = DefaultGenesisBlock()
++			genesis = DefaultAETGenesisBlock()
+ 		} else {
+ 			log.Info("Writing custom genesis block")
+ 		}
+@@ -210,7 +210,7 @@
+ 	case g != nil:
+ 		return g.Config
+ 	case ghash == params.MainnetGenesisHash:
+-		return params.MainnetChainConfig
++		return params.AET_MainnetChainConfig
+ 	case ghash == params.TestnetGenesisHash:
+ 		return params.TestnetChainConfig
+ 	default:
+@@ -296,7 +296,14 @@
+ 	g := Genesis{Alloc: GenesisAlloc{addr: {Balance: balance}}}
+ 	return g.MustCommit(db)
+ }
+-
++func DefaultAETGenesisBlock() *Genesis { // returns default AfterEther genesis block
++    return &Genesis{
++        Config:     params.AET_MainnetChainConfig,
++        Difficulty: big.NewInt(2100),
++        GasLimit:   2100000,
++        Alloc:      decodePrealloc(AETallocData),
++    }
++}
+ // DefaultGenesisBlock returns the Ethereum main net genesis block.
+ func DefaultGenesisBlock() *Genesis {
+ 	return &Genesis{
+diff -Naur go-ethereum-1.8.12/eth/config.go go-afterether-1.8.12/eth/config.go
+--- go-ethereum-1.8.12/eth/config.go	2018-07-04 18:08:05.000000000 -0500
++++ go-afterether-1.8.12/eth/config.go	2018-07-30 08:54:06.730068382 -0500
+@@ -43,7 +43,7 @@
+ 		DatasetsInMem:  1,
+ 		DatasetsOnDisk: 2,
+ 	},
+-	NetworkId:     1,
++	NetworkId:     233,
+ 	LightPeers:    100,
+ 	DatabaseCache: 768,
+ 	TrieCache:     256,
+diff -Naur go-ethereum-1.8.12/node/defaults.go go-afterether-1.8.12/node/defaults.go
+--- go-ethereum-1.8.12/node/defaults.go	2018-07-04 18:08:05.000000000 -0500
++++ go-afterether-1.8.12/node/defaults.go	2018-07-30 08:55:04.699661984 -0500
+@@ -55,11 +55,11 @@
+ 	home := homeDir()
+ 	if home != "" {
+ 		if runtime.GOOS == "darwin" {
+-			return filepath.Join(home, "Library", "Ethereum")
++			return filepath.Join(home, "Library", "AfterEther")
+ 		} else if runtime.GOOS == "windows" {
+-			return filepath.Join(home, "AppData", "Roaming", "Ethereum")
++			return filepath.Join(home, "AppData", "Roaming", "AfterEther")
+ 		} else {
+-			return filepath.Join(home, ".ethereum")
++			return filepath.Join(home, ".afterether")
+ 		}
+ 	}
+ 	// As we cannot guess a stable location, return empty and handle later
+diff -Naur go-ethereum-1.8.12/p2p/discover/udp.go go-afterether-1.8.12/p2p/discover/udp.go
+--- go-ethereum-1.8.12/p2p/discover/udp.go	2018-07-04 18:08:05.000000000 -0500
++++ go-afterether-1.8.12/p2p/discover/udp.go	2018-07-30 09:12:44.481090356 -0500
+@@ -56,7 +56,7 @@
+ 
+ // RPC packet types
+ const (
+-	pingPacket = iota + 1 // zero is 'reserved'
++	pingPacket = iota + 233 //we change the protocol to isolate AfterEther network from Ethereum's main net and other nets
+ 	pongPacket
+ 	findnodePacket
+ 	neighborsPacket
+diff -Naur go-ethereum-1.8.12/params/bootnodes.go go-afterether-1.8.12/params/bootnodes.go
+--- go-ethereum-1.8.12/params/bootnodes.go	2018-07-04 18:08:05.000000000 -0500
++++ go-afterether-1.8.12/params/bootnodes.go	2018-07-30 08:56:18.341689029 -0500
+@@ -20,14 +20,11 @@
+ // the main Ethereum network.
+ var MainnetBootnodes = []string{
+ 	// Ethereum Foundation Go Bootnodes
+-	"enode://a979fb575495b8d6db44f750317d0f4622bf4c2aa3365d6af7c284339968eef29b69ad0dce72a4d8db5ebb4968de0e3bec910127f134779fbcb0cb6d3331163c@52.16.188.185:30303", // IE
+-	"enode://3f1d12044546b76342d59d4a05532c14b85aa669704bfe1f864fe079415aa2c02d743e03218e57a33fb94523adb54032871a6c51b2cc5514cb7c7e35b3ed0a99@13.93.211.84:30303",  // US-WEST
+-	"enode://78de8a0916848093c73790ead81d1928bec737d565119932b98c6b100d944b7a95e94f847f689fc723399d2e31129d182f7ef3863f2b4c820abbf3ab2722344d@191.235.84.50:30303", // BR
+-	"enode://158f8aab45f6d19c6cbf4a089c2670541a8da11978a2f90dbf6a502a4a3bab80d288afdbeb7ec0ef6d92de563767f3b1ea9e8e334ca711e9f8e2df5a0385e8e6@13.75.154.138:30303", // AU
+-	"enode://1118980bf48b0a3640bdba04e0fe78b1add18e1cd99bf22d53daac1fd9972ad650df52176e7c7d89d1114cfef2bc23a2959aa54998a46afcf7d91809f0855082@52.74.57.123:30303",  // SG
++        "enode://18414b19b5ec88f889760baa2d993f7ac14560de7e5ae9744427784417c04170af70974b2e5adb215b3136b6df2a20658d5c669930b3707b5602df4a5122795e@45.33.110.185:30300",
++        "enode://37e322121d658fc6a3127413dadc4d356f2ef266b69cd5aa5e95326e76d58180080c54723638ae1444739e9f4c2906687afc110b336e4b0671b35f6167e59e83@45.79.98.29:30300",
++        "enode://f1be54f3137fcc888b7ddd184fbd7be33eb6d41d73c7e223eb66dd2d8189b9182354f16c150fc92ace10f87567509e5f2b58ccc2a1b6b6491f605f374b2a35f3@45.79.90.221:30300",
+ 
+ 	// Ethereum Foundation C++ Bootnodes
+-	"enode://979b7fa28feeb35a4741660a16076f1943202cb72b6af70d327f053e248bab9ba81760f39d0701ef1d8f89cc1fbd2cacba0710a12cd5314d5e0c9021aa3637f9@5.1.83.226:30303", // DE
+ }
+ 
+ // TestnetBootnodes are the enode URLs of the P2P bootstrap nodes running on the
+diff -Naur go-ethereum-1.8.12/params/config.go go-afterether-1.8.12/params/config.go
+--- go-ethereum-1.8.12/params/config.go	2018-07-04 18:08:05.000000000 -0500
++++ go-afterether-1.8.12/params/config.go	2018-07-30 08:57:47.956159588 -0500
+@@ -25,12 +25,26 @@
+ 
+ // Genesis hashes to enforce below configs on.
+ var (
+-	MainnetGenesisHash = common.HexToHash("0xd4e56740f876aef8c010b86a40d5f56745a118d0906a34e69aec8c0db1cb8fa3")
++	MainnetGenesisHash = common.HexToHash("0x13771466fee63d1916818f25c5e2ed5e09330b9fccc8da760c172d09412680d4") // AET's Mainnet genesis hash to enforce below configs on
+ 	TestnetGenesisHash = common.HexToHash("0x41941023680923e0fe4d74a34bdac8141f2540e3ae90623718e47d66d1ca4a2d")
+ )
+ 
+ var (
+ 	// MainnetChainConfig is the chain parameters to run a node on the main network.
++    AET_MainnetChainConfig = &ChainConfig{
++        ChainID:        big.NewInt(233),
++        HomesteadBlock: big.NewInt(1),
++        DAOForkBlock:   big.NewInt(1),
++        DAOForkSupport: false,
++        EIP150Block:    big.NewInt(1),
++        EIP150Hash:     common.HexToHash(""),
++        EIP155Block:    big.NewInt(1),
++        EIP158Block:    big.NewInt(1),
++        ByzantiumBlock: big.NewInt(1),
++
++        Ethash: new(EthashConfig),
++    }
++
+ 	MainnetChainConfig = &ChainConfig{
+ 		ChainID:             big.NewInt(1),
+ 		HomesteadBlock:      big.NewInt(1150000),
+diff -Naur go-ethereum-1.8.12/params/protocol_params.go go-afterether-1.8.12/params/protocol_params.go
+--- go-ethereum-1.8.12/params/protocol_params.go	2018-07-04 18:08:05.000000000 -0500
++++ go-afterether-1.8.12/params/protocol_params.go	2018-07-30 08:59:02.206209726 -0500
+@@ -82,6 +82,6 @@
+ var (
+ 	DifficultyBoundDivisor = big.NewInt(2048)   // The bound divisor of the difficulty, used in the update calculations.
+ 	GenesisDifficulty      = big.NewInt(131072) // Difficulty of the Genesis block.
+-	MinimumDifficulty      = big.NewInt(131072) // The minimum that the difficulty may ever be.
++	MinimumDifficulty      = big.NewInt(2100)                     // The minimum that the difficulty may ever be.
+ 	DurationLimit          = big.NewInt(13)     // The decision boundary on the blocktime duration used to determine whether difficulty should go up or not.
+ )

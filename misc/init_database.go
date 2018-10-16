@@ -1,3 +1,20 @@
+/*
+	Copyright 2018 The AfterEther Team
+	This file is part of the EthBot, Ethereum Blockchain -> SQL converter.
+		
+	EthBot is free software: you can redistribute it and/or modify
+	it under the terms of the GNU Lesser General Public License as published by
+	the Free Software Foundation, either version 3 of the License, or
+	(at your option) any later version.
+	
+	EthBot is distributed in the hope that it will be useful,
+	but WITHOUT ANY WARRANTY; without even the implied warranty of
+	MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
+	GNU Lesser General Public License for more details.
+	
+	You should have received a copy of the GNU Lesser General Public License
+	along with EthBot. If not, see <http://www.gnu.org/licenses/>.
+*/
 package main
 
 import (
@@ -9,7 +26,6 @@ import (
 	"net"
 )
 const initdb_sql_filename string = "./init_database.sql";
-const functions_sql_filename string = "./functions.sql";
 func main() {
 	var err error
 	var db *sql.DB
@@ -31,21 +47,6 @@ func main() {
 	}
 	initdb_sql:=string(data);
 
-	// Read() PLSQL (stored procedures) 
-    _, err = os.Stat(functions_sql_filename)
-    if os.IsNotExist(err) {
-		std_err.Println("Please place the file named 'functions.sql' into the current direcotry, this file must contain function definitions")
-        os.Exit(2);
-    }
-	var plsql_data []byte;
-	data,err=ioutil.ReadFile(functions_sql_filename);
-	if (err!=nil) {
-		std_err.Println("cant read ",functions_sql_filename);
-		log.Fatal(err);
-		os.Exit(2);
-	}
-	plsql_sql:=string(plsql_data);
-
 	host,port,err:=net.SplitHostPort(os.Getenv("ETHBOT_HOST"))
 	if (err!=nil) {
 		host=os.Getenv("ETHBOT_HOST")
@@ -62,12 +63,6 @@ func main() {
 		log.Fatal(err);
 	} else {
 		std_out.Println("Database has been initialized");
-	}
-	_,err=db.Exec(plsql_sql);
-	if (err!=nil) {
-		log.Fatal(err);
-	} else {
-		std_out.Println("SQL functions (PLSQL) have been created");
 	}
 }
 

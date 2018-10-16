@@ -1,3 +1,20 @@
+/*
+	Copyright 2018 The AfterEther Team
+	This file is part of the EthBot, Ethereum Blockchain -> SQL converter.
+		
+	EthBot is free software: you can redistribute it and/or modify
+	it under the terms of the GNU Lesser General Public License as published by
+	the Free Software Foundation, either version 3 of the License, or
+	(at your option) any later version.
+	
+	EthBot is distributed in the hope that it will be useful,
+	but WITHOUT ANY WARRANTY; without even the implied warranty of
+	MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
+	GNU Lesser General Public License for more details.
+	
+	You should have received a copy of the GNU Lesser General Public License
+	along with EthBot. If not, see <http://www.gnu.org/licenses/>.
+*/
 package main
 
 import (
@@ -8,6 +25,8 @@ import (
     "runtime"
     "sort"
     "time"
+	"strings"
+	"encoding/hex"
 
     "github.com/ethereum/go-ethereum/common"
     "github.com/ethereum/go-ethereum/node"
@@ -15,6 +34,7 @@ import (
 	"github.com/ethereum/go-ethereum/metrics"
     "github.com/ethereum/go-ethereum/console"
     "github.com/ethereum/go-ethereum/log"
+	"github.com/ethereum/go-ethereum/accounts/abi"
 
 	"github.com/afterether/ethbot/internal/debug"
 
@@ -33,67 +53,66 @@ var (
     app = utils.NewApp(gitCommit, "the go-ethereum command line interface")
     // flags that configure the node
     nodeFlags = []cli.Flag{
-        utils.IdentityFlag,
-        utils.UnlockedAccountFlag,
-        utils.PasswordFileFlag,
-        utils.BootnodesFlag,
-        utils.BootnodesV4Flag,
-        utils.BootnodesV5Flag,
-        utils.DataDirFlag,
-        utils.KeyStoreDirFlag,
-        utils.NoUSBFlag,
-        utils.EthashCacheDirFlag,
-        utils.EthashCachesInMemoryFlag,
-        utils.EthashCachesOnDiskFlag,
-        utils.EthashDatasetDirFlag,
-        utils.EthashDatasetsInMemoryFlag,
-        utils.EthashDatasetsOnDiskFlag,
-        utils.TxPoolNoLocalsFlag,
-        utils.TxPoolJournalFlag,
-        utils.TxPoolRejournalFlag,
-        utils.TxPoolPriceLimitFlag,
-        utils.TxPoolPriceBumpFlag,
-        utils.TxPoolAccountSlotsFlag,
-        utils.TxPoolGlobalSlotsFlag,
-        utils.TxPoolAccountQueueFlag,
-        utils.TxPoolGlobalQueueFlag,
-        utils.TxPoolLifetimeFlag,
-        utils.FastSyncFlag,
-        utils.LightModeFlag,
-        utils.SyncModeFlag,
-        utils.LightServFlag,
-        utils.LightPeersFlag,
-        utils.LightKDFFlag,
-        utils.CacheFlag,
-        utils.TrieCacheGenFlag,
-        utils.ListenPortFlag,
-        utils.MaxPeersFlag,
-        utils.MaxPendingPeersFlag,
-        utils.EtherbaseFlag,
-        utils.GasPriceFlag,
-        utils.MinerThreadsFlag,
-        utils.MiningEnabledFlag,
-        utils.TargetGasLimitFlag,
-        utils.NATFlag,
-        utils.NoDiscoverFlag,
-        utils.DiscoveryV5Flag,
-        utils.NetrestrictFlag,
-        utils.NodeKeyFileFlag,
-        utils.NodeKeyHexFlag,
-        utils.DevModeFlag,
-        utils.TestnetFlag,
-        utils.RinkebyFlag,
-        utils.VMEnableDebugFlag,
-        utils.NetworkIdFlag,
-        utils.RPCCORSDomainFlag,
-        utils.EthStatsURLFlag,
-        utils.MetricsEnabledFlag,
-        utils.FakePoWFlag,
-        utils.NoCompactionFlag,
-        utils.GpoBlocksFlag,
-        utils.GpoPercentileFlag,
-        utils.ExtraDataFlag,
-        utils.NoExportFlag,
+		utils.IdentityFlag,
+		utils.UnlockedAccountFlag,
+		utils.PasswordFileFlag,
+		utils.BootnodesFlag,
+		utils.BootnodesV4Flag,
+		utils.BootnodesV5Flag,
+		utils.DataDirFlag,
+		utils.KeyStoreDirFlag,
+		utils.EthashCacheDirFlag,
+		utils.EthashCachesInMemoryFlag,
+		utils.EthashCachesOnDiskFlag,
+		utils.EthashDatasetDirFlag,
+		utils.EthashDatasetsInMemoryFlag,
+		utils.EthashDatasetsOnDiskFlag,
+		utils.TxPoolNoLocalsFlag,
+		utils.TxPoolJournalFlag,
+		utils.TxPoolRejournalFlag,
+		utils.TxPoolPriceLimitFlag,
+		utils.TxPoolPriceBumpFlag,
+		utils.TxPoolAccountSlotsFlag,
+		utils.TxPoolGlobalSlotsFlag,
+		utils.TxPoolAccountQueueFlag,
+		utils.TxPoolGlobalQueueFlag,
+		utils.TxPoolLifetimeFlag,
+		utils.FastSyncFlag,
+		utils.LightModeFlag,
+		utils.SyncModeFlag,
+		utils.GCModeFlag,
+		utils.CacheFlag,
+		utils.CacheDatabaseFlag,
+		utils.CacheGCFlag,
+		utils.TrieCacheGenFlag,
+		utils.ListenPortFlag,
+		utils.MaxPeersFlag,
+		utils.MaxPendingPeersFlag,
+		utils.EtherbaseFlag,
+		utils.GasPriceFlag,
+		utils.MinerThreadsFlag,
+		utils.MiningEnabledFlag,
+		utils.TargetGasLimitFlag,
+		utils.NATFlag,
+		utils.NoDiscoverFlag,
+		utils.DiscoveryV5Flag,
+		utils.NetrestrictFlag,
+		utils.NodeKeyFileFlag,
+		utils.NodeKeyHexFlag,
+		utils.VMEnableDebugFlag,
+		utils.NetworkIdFlag,
+		utils.RPCCORSDomainFlag,
+		utils.RPCVirtualHostsFlag,
+		utils.EthStatsURLFlag,
+		utils.MetricsEnabledFlag,
+		utils.FakePoWFlag,
+		utils.NoCompactionFlag,
+		utils.GpoBlocksFlag,
+		utils.GpoPercentileFlag,
+		utils.ExtraDataFlag,
+		configFileFlag,
+		utils.NoExportFlag,
+		utils.PTXOutFlag,
     }
     rpcFlags = []cli.Flag{
         utils.RPCEnabledFlag,
@@ -109,9 +128,6 @@ var (
         utils.IPCPathFlag,
     }
     whisperFlags = []cli.Flag{
-        utils.WhisperEnabledFlag,
-        utils.WhisperMaxMessageSizeFlag,
-        utils.WhisperMinPOWFlag,
     }
 )
 func Fatalf(format string, args ...interface{}) {
@@ -131,6 +147,29 @@ func Fatalf(format string, args ...interface{}) {
     os.Exit(1)
 }
 func init() {
+	var err error
+
+	_, err = os.Stat(alarms_dir)
+	if os.IsNotExist(err) {
+		err=os.Mkdir(alarms_dir,0755)
+		if err!=nil {
+			utils.Fatalf(fmt.Sprintf("Can't create directory %v: %v",alarms_dir,err))
+		}
+	}
+	erc20_token_abi, err = abi.JSON(strings.NewReader(erc20_token_abi_str))
+	if err!=nil {
+		utils.Fatalf("Invalid events ABI for ERC20 token standard: %v",err)
+	}
+	erc20_methods_abi, err = abi.JSON(strings.NewReader(erc20_methods_abi_json_str))
+	if err!=nil {
+		utils.Fatalf("Invalid methods ABI for ERC20 token standard: %v",err)
+	}
+	erc20_transfer_event_signature,_ = hex.DecodeString("ddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef")
+	erc20_approval_event_signature,_ = hex.DecodeString("8c5be1e5ebec7d5bd14f71427d1e84f3dd0314c0f7b2291e5b200ac8c7c3b925")
+	erc20_transfer_method_signature,_= hex.DecodeString("a9059cbb")
+	erc20_approve_method_signature,_ = hex.DecodeString("095ea7b3")
+	erc20_transfer_from_method_signature,_ = hex.DecodeString("23b872dd")
+
     // Initialize the CLI app and start Geth
     app.Action = geth
     app.HideVersion = true // we have a command to print the version
@@ -210,13 +249,13 @@ func startNode(ctx *cli.Context, stack *node.Node) {
         debug.LoudPanic("boom")
     }()
 
+	method,_:=erc20_token_abi.Methods["approve"]
 	ethbot_instance.check_export_on_startup(ctx)
+	ethbot_instance.verify_genesis_block_hashes()
 }
 
 func main() {
     log.PrintOrigins(true)
-
-	//defer profile.Start(profile.MemProfile).Stop()
 
     if err := app.Run(os.Args); err != nil {
         fmt.Fprintln(os.Stderr, err)

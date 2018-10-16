@@ -1,26 +1,12 @@
-CREATE OR REPLACE FUNCTION update_last_balance_insert() RETURNS trigger AS  $$
-BEGIN
-		IF NEW.from_id = NEW.to_id THEN
-			RETURN NEW;
-		END IF;
-		IF NEW.value = 0 THEN
-			RETURN NEW;
-		END IF;
-		UPDATE account SET last_balance=last_balance-NEW.value WHERE account_id=NEW.from_id;
-		UPDATE account SET last_balance=last_balance+NEW.value WHERE account_id=NEW.to_id;
-		RETURN NEW;
-END;
-$$ LANGUAGE plpgsql;
-CREATE OR REPLACE FUNCTION update_last_balance_delete() RETURNS trigger AS  $$
-BEGIN
-		IF OLD.from_id = OLD.to_id THEN
-			RETURN OLD;
-		END IF;
-		IF OLD.value = 0 THEN
-			RETURN OLD;
-		END IF;
-		UPDATE account SET last_balance=last_balance+OLD.value WHERE account_id=OLD.from_id;
-		UPDATE account SET last_balance=last_balance-OLD.value WHERE account_id=OLD.to_id;
-		RETURN OLD;
-END;
-$$ LANGUAGE plpgsql;
+-- blockchain
+CREATE TRIGGER update_last_balance_insert AFTER INSERT ON value_transfer FOR EACH ROW EXECUTE PROCEDURE update_last_balance_insert();
+CREATE TRIGGER update_last_balance_delete AFTER DELETE ON value_transfer FOR EACH ROW EXECUTE PROCEDURE update_last_balance_delete();
+CREATE TRIGGER update_account_nonce_insert AFTER INSERT ON transaction FOR EACH ROW EXECUTE PROCEDURE update_account_nonce_insert();
+CREATE TRIGGER update_account_nonce_delete AFTER DELETE ON transaction FOR EACH ROW EXECUTE PROCEDURE update_account_nonce_delete();
+-- tokens
+CREATE TRIGGER update_holdings_tokop_insert AFTER INSERT ON tokop FOR EACH ROW EXECUTE PROCEDURE update_holdings_tokop_insert();
+CREATE TRIGGER update_holdings_tokop_delete AFTER DELETE ON tokop FOR EACH ROW EXECUTE PROCEDURE update_holdings_tokop_delete();
+CREATE TRIGGER update_holdings_approval_insert AFTER INSERT ON approval FOR EACH ROW EXECUTE PROCEDURE update_holdings_approval_insert();
+CREATE TRIGGER update_holdings_approval_delete AFTER DELETE ON approval FOR EACH ROW EXECUTE PROCEDURE update_holdings_approval_delete();
+CREATE TRIGGER tkapr_insert AFTER INSERT ON tokop_approval FOR EACH ROW EXECUTE PROCEDURE tkapr_insert();
+CREATE TRIGGER tkapr_delete BEFORE DELETE ON tokop_approval FOR EACH ROW EXECUTE PROCEDURE tkapr_delete();
